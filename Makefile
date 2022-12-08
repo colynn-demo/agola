@@ -73,3 +73,7 @@ docker-agola:
 .PHONY: docker-agolademo
 docker-agolademo:
 	docker build . -t agolademo
+	
+.PHONY: run
+run: agola
+	./bin/agola serve --config  config.yml --components all-base,executor
