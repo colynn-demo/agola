@@ -20,15 +20,15 @@ import (
 	"fmt"
 	"time"
 
-	"agola.io/agola/internal/errors"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/services/common"
 	"agola.io/agola/internal/services/config"
 	"agola.io/agola/internal/util"
 	rsapitypes "agola.io/agola/services/runservice/api/types"
 	rsclient "agola.io/agola/services/runservice/client"
-
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func (s *Scheduler) scheduleLoop(ctx context.Context) {
@@ -200,7 +200,7 @@ func NewScheduler(ctx context.Context, log zerolog.Logger, c *config.Scheduler) 
 	return &Scheduler{
 		log:              log,
 		c:                c,
-		runserviceClient: rsclient.NewClient(c.RunserviceURL),
+		runserviceClient: rsclient.NewClient(c.RunserviceURL, c.RunserviceAPIToken),
 	}, nil
 }
 

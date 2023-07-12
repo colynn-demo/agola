@@ -17,12 +17,12 @@ package cmd
 import (
 	"context"
 
-	"agola.io/agola/internal/errors"
+	"github.com/rs/zerolog/log"
+	"github.com/sorintlab/errors"
+	"github.com/spf13/cobra"
+
 	gwapitypes "agola.io/agola/services/gateway/api/types"
 	gwclient "agola.io/agola/services/gateway/client"
-
-	"github.com/rs/zerolog/log"
-	"github.com/spf13/cobra"
 )
 
 var cmdLogDelete = &cobra.Command{
@@ -133,7 +133,7 @@ func logDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	if err != nil {
-		return errors.Errorf("failed to delete log: %v", err)
+		return errors.Wrapf(err, "failed to delete log")
 	}
 
 	return nil

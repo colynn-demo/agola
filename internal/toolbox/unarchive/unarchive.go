@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"agola.io/agola/internal/errors"
+	"github.com/sorintlab/errors"
 )
 
 const (
@@ -101,7 +101,7 @@ func untarNext(tr *tar.Reader, destDir string, overwrite bool) error {
 			}
 		}
 		return mkdir(destPath, hdr.FileInfo().Mode())
-	case tar.TypeReg, tar.TypeRegA, tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
+	case tar.TypeReg, tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
 		fi, err := os.Lstat(destPath)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return errors.WithStack(err)

@@ -21,8 +21,9 @@ import (
 	"path"
 	"regexp"
 
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/config"
-	"agola.io/agola/internal/errors"
 	gitsource "agola.io/agola/internal/gitsources"
 	"agola.io/agola/internal/runconfig"
 	scommon "agola.io/agola/internal/services/common"
@@ -41,7 +42,7 @@ const (
 	agolaDefaultConfigDir          = ".agola"
 	agolaDefaultStarlarkConfigFile = "config.star"
 	agolaDefaultJsonnetConfigFile  = "config.jsonnet"
-	agolaDefaultJsonConfigFile     = "config.json"
+	agolaDefaultJSONConfigFile     = "config.json"
 	agolaDefaultYamlConfigFile     = "config.yml"
 
 	// List of runs annotations
@@ -594,7 +595,7 @@ func (h *ActionHandler) fetchConfigFiles(ctx context.Context, gitSource gitsourc
 	var data []byte
 	var filename string
 	err := util.ExponentialBackoff(ctx, util.FetchFileBackoff, func() (bool, error) {
-		for _, filename = range []string{agolaDefaultStarlarkConfigFile, agolaDefaultJsonnetConfigFile, agolaDefaultJsonConfigFile, agolaDefaultYamlConfigFile} {
+		for _, filename = range []string{agolaDefaultStarlarkConfigFile, agolaDefaultJsonnetConfigFile, agolaDefaultJSONConfigFile, agolaDefaultYamlConfigFile} {
 			var err error
 			data, err = gitSource.GetFile(repopath, commitSHA, path.Join(agolaDefaultConfigDir, filename))
 			if err == nil {

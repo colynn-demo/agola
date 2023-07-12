@@ -21,21 +21,23 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/mux"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/sorintlab/errors"
+
 	scommon "agola.io/agola/internal/common"
-	idb "agola.io/agola/internal/db"
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/lock"
 	"agola.io/agola/internal/objectstorage"
+	"agola.io/agola/internal/services/common"
 	"agola.io/agola/internal/services/config"
 	action "agola.io/agola/internal/services/configstore/action"
 	"agola.io/agola/internal/services/configstore/api"
 	"agola.io/agola/internal/services/configstore/db"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/services/handlers"
+	"agola.io/agola/internal/sqlg/lock"
+	"agola.io/agola/internal/sqlg/manager"
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
-
-	"github.com/gorilla/mux"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func (s *Configstore) maintenanceModeWatcherLoop(ctx context.Context, runCtxCancel context.CancelFunc, maintenanceModeEnabled bool) {
@@ -117,12 +119,14 @@ func NewConfigstore(ctx context.Context, log zerolog.Logger, c *config.Configsto
 	case sql.Postgres:
 		lf = lock.NewPGLockFactory(sdb)
 	default:
-		return nil, errors.Errorf("unknown type %q", c.DB.Type)
+		return nil, errors.Errorf("unknown db type %q", c.DB.Type)
 	}
 	cs.lf = lf
 
-	if err := idb.Setup(ctx, log, d, lf); err != nil {
-		return nil, errors.Wrapf(err, "create db error")
+	dbm := manager.NewDBManager(log, d, lf)
+
+	if err := common.SetupDB(ctx, dbm); err != nil {
+		return nil, errors.Wrap(err, "failed to setup db")
 	}
 
 	ah := action.NewActionHandler(log, d, lf)
@@ -132,6 +136,7 @@ func NewConfigstore(ctx context.Context, log zerolog.Logger, c *config.Configsto
 }
 
 func (s *Configstore) setupDefaultRouter() http.Handler {
+	maintenanceStatusHandler := api.NewMaintenanceStatusHandler(s.log, s.ah, false)
 	maintenanceModeHandler := api.NewMaintenanceModeHandler(s.log, s.ah)
 	exportHandler := api.NewExportHandler(s.log, s.ah)
 	importHandler := api.NewImportHandler(s.log, s.ah)
@@ -194,12 +199,18 @@ func (s *Configstore) setupDefaultRouter() http.Handler {
 	updateRemoteSourceHandler := api.NewUpdateRemoteSourceHandler(s.log, s.ah)
 	deleteRemoteSourceHandler := api.NewDeleteRemoteSourceHandler(s.log, s.ah)
 
+	linkedAccountsHandler := api.NewLinkedAccountsHandler(s.log, s.d)
+
 	createOrgInvitationHandler := api.NewCreateOrgInvitationHandler(s.log, s.ah)
 	deleteOrgInvitationHandler := api.NewDeleteOrgInvitationHandler(s.log, s.ah)
 	orgInvitationHandler := api.NewOrgInvitationHandler(s.log, s.ah)
 
+	authHandler := handlers.NewInternalAuthChecker(s.log, s.c.APIToken)
+
 	router := mux.NewRouter()
 	apirouter := router.PathPrefix("/api/v1alpha").Subrouter().UseEncodedPath()
+
+	apirouter.Use(authHandler)
 
 	apirouter.Handle("/projectgroups/{projectgroupref}", projectGroupHandler).Methods("GET")
 	apirouter.Handle("/projectgroups/{projectgroupref}/subgroups", projectGroupSubgroupsHandler).Methods("GET")
@@ -268,6 +279,9 @@ func (s *Configstore) setupDefaultRouter() http.Handler {
 	apirouter.Handle("/remotesources/{remotesourceref}", updateRemoteSourceHandler).Methods("PUT")
 	apirouter.Handle("/remotesources/{remotesourceref}", deleteRemoteSourceHandler).Methods("DELETE")
 
+	apirouter.Handle("/linkedaccounts", linkedAccountsHandler).Methods("GET")
+
+	apirouter.Handle("/maintenance", maintenanceStatusHandler).Methods("GET")
 	apirouter.Handle("/maintenance", maintenanceModeHandler).Methods("PUT", "DELETE")
 
 	apirouter.Handle("/export", exportHandler).Methods("GET")
@@ -280,6 +294,7 @@ func (s *Configstore) setupDefaultRouter() http.Handler {
 }
 
 func (s *Configstore) setupMaintenanceRouter() http.Handler {
+	maintenanceStatusHandler := api.NewMaintenanceStatusHandler(s.log, s.ah, true)
 	maintenanceModeHandler := api.NewMaintenanceModeHandler(s.log, s.ah)
 	exportHandler := api.NewExportHandler(s.log, s.ah)
 	importHandler := api.NewImportHandler(s.log, s.ah)
@@ -287,6 +302,7 @@ func (s *Configstore) setupMaintenanceRouter() http.Handler {
 	router := mux.NewRouter()
 	apirouter := router.PathPrefix("/api/v1alpha").Subrouter().UseEncodedPath()
 
+	apirouter.Handle("/maintenance", maintenanceStatusHandler).Methods("GET")
 	apirouter.Handle("/maintenance", maintenanceModeHandler).Methods("PUT", "DELETE")
 
 	apirouter.Handle("/export", exportHandler).Methods("GET")

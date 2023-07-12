@@ -17,14 +17,14 @@ package notification
 import (
 	"context"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/lock"
+	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/services/config"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/sqlg/lock"
+	"agola.io/agola/internal/sqlg/sql"
 	csclient "agola.io/agola/services/configstore/client"
 	rsclient "agola.io/agola/services/runservice/client"
-
-	"github.com/rs/zerolog"
 )
 
 type NotificationService struct {
@@ -63,8 +63,8 @@ func NewNotificationService(ctx context.Context, log zerolog.Logger, gc *config.
 		return nil, errors.Errorf("unknown type %q", c.DB.Type)
 	}
 
-	configstoreClient := csclient.NewClient(c.ConfigstoreURL)
-	runserviceClient := rsclient.NewClient(c.RunserviceURL)
+	configstoreClient := csclient.NewClient(c.ConfigstoreURL, c.ConfigstoreAPIToken)
+	runserviceClient := rsclient.NewClient(c.RunserviceURL, c.RunserviceAPIToken)
 
 	return &NotificationService{
 		log:               log,

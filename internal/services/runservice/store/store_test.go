@@ -17,10 +17,12 @@ package store
 import (
 	"testing"
 
-	"agola.io/agola/internal/errors"
+	"github.com/sorintlab/errors"
 )
 
 func TestOSTRunTaskIDFromArchivePath(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		archivePath string
@@ -60,7 +62,10 @@ func TestOSTRunTaskIDFromArchivePath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			id, err := OSTRunTaskIDFromPath(tt.archivePath)
 			if err != nil {
 				if tt.err == nil {

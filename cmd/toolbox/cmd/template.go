@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"runtime"
@@ -27,8 +26,7 @@ import (
 	"text/template"
 	"time"
 
-	"agola.io/agola/internal/errors"
-
+	"github.com/sorintlab/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -112,7 +110,7 @@ func templateRun(cmd *cobra.Command, args []string) {
 		"day":       func() string { return time.Now().Format("02") },
 	}
 
-	tmplStr, err := ioutil.ReadAll(os.Stdin)
+	tmplStr, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		log.Fatalf("failed to read template: %v", err)
 	}

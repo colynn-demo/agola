@@ -15,32 +15,20 @@
 package types
 
 import (
-	stypes "agola.io/agola/services/types"
-	"github.com/gofrs/uuid"
-)
-
-const (
-	OrgInvitationKind    = "orginvitation"
-	OrgInvitationVersion = "v0.1.0"
+	"agola.io/agola/internal/sqlg"
+	"agola.io/agola/internal/sqlg/sql"
 )
 
 type OrgInvitation struct {
-	stypes.TypeMeta
-	stypes.ObjectMeta
+	sqlg.ObjectMeta
 
-	UserID         string     `json:"userId,omitempty"`
-	OrganizationID string     `json:"organizationId,omitempty"`
+	UserID         string     `json:"user_id,omitempty"`
+	OrganizationID string     `json:"organization_id,omitempty"`
 	Role           MemberRole `json:"role,omitempty"`
 }
 
-func NewOrgInvitation() *OrgInvitation {
+func NewOrgInvitation(tx *sql.Tx) *OrgInvitation {
 	return &OrgInvitation{
-		TypeMeta: stypes.TypeMeta{
-			Kind:    OrgInvitationKind,
-			Version: OrgInvitationVersion,
-		},
-		ObjectMeta: stypes.ObjectMeta{
-			ID: uuid.Must(uuid.NewV4()).String(),
-		},
+		ObjectMeta: sqlg.NewObjectMeta(tx),
 	}
 }

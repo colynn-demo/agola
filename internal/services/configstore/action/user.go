@@ -18,13 +18,13 @@ import (
 	"context"
 	"time"
 
-	"agola.io/agola/internal/errors"
+	"github.com/gofrs/uuid"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/services/configstore/db"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/configstore/types"
-
-	"github.com/gofrs/uuid"
 )
 
 type CreateUserRequest struct {
@@ -72,13 +72,29 @@ func (h *ActionHandler) CreateUser(ctx context.Context, req *CreateUserRequest) 
 			}
 		}
 
-		user = types.NewUser()
+		user = types.NewUser(tx)
 		user.Name = req.UserName
 		user.Secret = util.EncodeSha1Hex(uuid.Must(uuid.NewV4()).String())
 
-		if req.CreateUserLARequest != nil {
+		if err := h.d.InsertUser(tx, user); err != nil {
+			return errors.WithStack(err)
+		}
 
-			la := types.NewLinkedAccount()
+		// create root user project group
+		pg := types.NewProjectGroup(tx)
+		// use public visibility
+		pg.Visibility = types.VisibilityPublic
+		pg.Parent = types.Parent{
+			Kind: types.ObjectKindUser,
+			ID:   user.ID,
+		}
+
+		if err := h.d.InsertProjectGroup(tx, pg); err != nil {
+			return errors.WithStack(err)
+		}
+
+		if req.CreateUserLARequest != nil {
+			la := types.NewLinkedAccount(tx)
 			la.UserID = user.ID
 			la.RemoteSourceID = rs.ID
 			la.RemoteUserID = req.CreateUserLARequest.RemoteUserID
@@ -91,22 +107,6 @@ func (h *ActionHandler) CreateUser(ctx context.Context, req *CreateUserRequest) 
 			if err := h.d.InsertLinkedAccount(tx, la); err != nil {
 				return errors.WithStack(err)
 			}
-		}
-
-		// create root user project group
-		pg := types.NewProjectGroup()
-		// use public visibility
-		pg.Visibility = types.VisibilityPublic
-		pg.Parent = types.Parent{
-			Kind: types.ObjectKindUser,
-			ID:   user.ID,
-		}
-
-		if err := h.d.InsertUser(tx, user); err != nil {
-			return errors.WithStack(err)
-		}
-		if err := h.d.InsertProjectGroup(tx, pg); err != nil {
-			return errors.WithStack(err)
 		}
 
 		return nil
@@ -131,15 +131,20 @@ func (h *ActionHandler) DeleteUser(ctx context.Context, userRef string) error {
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("user %q doesn't exist", userRef))
 		}
 
-		userOrgInvitations, err := h.d.GetOrgInvitationByUserID(tx, user.ID)
-		if err != nil {
-			return errors.WithStack(err)
+		if err := h.d.DeleteOrgMembersByUserID(tx, user.ID); err != nil {
+			return util.NewAPIError(util.KindFromRemoteError(err), err)
 		}
-		for _, orgInvitation := range userOrgInvitations {
-			err = h.d.DeleteOrgInvitation(tx, orgInvitation.ID)
-			if err != nil {
-				return errors.WithStack(err)
-			}
+
+		if err := h.d.DeleteOrgInvitationsByUserID(tx, user.ID); err != nil {
+			return util.NewAPIError(util.KindFromRemoteError(err), err)
+		}
+
+		if err := h.d.DeleteLinkedAccountsByUserID(tx, user.ID); err != nil {
+			return util.NewAPIError(util.KindFromRemoteError(err), err)
+		}
+
+		if err := h.d.DeleteUserTokensByUserID(tx, user.ID); err != nil {
+			return util.NewAPIError(util.KindFromRemoteError(err), err)
 		}
 
 		if err := h.d.DeleteUser(tx, user.ID); err != nil {
@@ -276,7 +281,7 @@ func (h *ActionHandler) CreateUserLA(ctx context.Context, req *CreateUserLAReque
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("linked account for remote user id %q for remote source %q already exists", req.RemoteUserID, req.RemoteSourceName))
 		}
 
-		la = types.NewLinkedAccount()
+		la = types.NewLinkedAccount(tx)
 		la.UserID = user.ID
 		la.RemoteSourceID = rs.ID
 		la.RemoteUserID = req.RemoteUserID
@@ -469,7 +474,7 @@ func (h *ActionHandler) CreateUserToken(ctx context.Context, userRef, tokenName 
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("token %q for user %q already exists", tokenName, userRef))
 		}
 
-		token = types.NewUserToken()
+		token = types.NewUserToken(tx)
 		token.UserID = user.ID
 		token.Name = tokenName
 		token.Value = util.EncodeSha1Hex(uuid.Must(uuid.NewV4()).String())

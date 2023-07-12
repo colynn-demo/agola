@@ -17,10 +17,10 @@ package gitsource
 import (
 	"net/http"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/services/types"
-
+	"github.com/sorintlab/errors"
 	"golang.org/x/oauth2"
+
+	"agola.io/agola/internal/services/types"
 )
 
 type CommitStatus string
@@ -67,11 +67,14 @@ type UserSource interface {
 
 type PasswordSource interface {
 	UserSource
-	LoginPassword(username, password, tokenName string) (string, error)
+	CreateAccessToken(tokenName string) (string, error)
 }
 
 type Oauth2Source interface {
 	UserSource
+}
+
+type Oauth2Client interface {
 	// GetOauth2AuthorizationURL return the authorization request URL to the
 	// authorization server
 	GetOauth2AuthorizationURL(callbackURL, state string) (redirectURL string, err error)

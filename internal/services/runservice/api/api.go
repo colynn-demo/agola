@@ -24,18 +24,18 @@ import (
 	"strconv"
 	"time"
 
-	"agola.io/agola/internal/errors"
+	"github.com/gorilla/mux"
+	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/objectstorage"
 	"agola.io/agola/internal/services/runservice/action"
 	"agola.io/agola/internal/services/runservice/db"
 	"agola.io/agola/internal/services/runservice/store"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	rsapitypes "agola.io/agola/services/runservice/api/types"
 	"agola.io/agola/services/runservice/types"
-
-	"github.com/gorilla/mux"
-	"github.com/rs/zerolog"
 )
 
 type LogsHandler struct {
@@ -165,12 +165,12 @@ func (h *LogsHandler) readTaskLogs(ctx context.Context, runID, taskID string, se
 			return util.NewAPIError(util.ErrNotExist, errors.Errorf("executor task for run task with id %q doesn't exist", task.ID))
 		}
 
-		executor, err = h.d.GetExecutorByExecutorID(tx, et.Spec.ExecutorID)
+		executor, err = h.d.GetExecutorByExecutorID(tx, et.ExecutorID)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 		if executor == nil {
-			return util.NewAPIError(util.ErrNotExist, errors.Errorf("executor with id %q doesn't exist", et.Spec.ExecutorID))
+			return util.NewAPIError(util.ErrNotExist, errors.Errorf("executor with id %q doesn't exist", et.ExecutorID))
 		}
 
 		return nil
@@ -943,7 +943,6 @@ func NewRunEventsHandler(log zerolog.Logger, d *db.DB, ost *objectstorage.ObjSto
 	}
 }
 
-//
 func (h *RunEventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

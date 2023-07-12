@@ -18,7 +18,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -26,7 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"agola.io/agola/internal/errors"
+	"github.com/sorintlab/errors"
+
 	gitsource "agola.io/agola/internal/gitsources"
 	"agola.io/agola/internal/services/types"
 	"agola.io/agola/internal/util"
@@ -121,7 +121,7 @@ func (c *Client) GetFile(repopath, commit, file string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	return data, errors.WithStack(err)
 }
 

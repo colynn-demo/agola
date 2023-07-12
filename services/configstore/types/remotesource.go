@@ -15,13 +15,10 @@
 package types
 
 import (
-	"encoding/json"
+	"github.com/sorintlab/errors"
 
-	"agola.io/agola/internal/errors"
-	stypes "agola.io/agola/services/types"
-	"agola.io/agola/util"
-
-	"github.com/gofrs/uuid"
+	"agola.io/agola/internal/sqlg"
+	"agola.io/agola/internal/sqlg/sql"
 )
 
 type RemoteSourceType string
@@ -39,14 +36,8 @@ const (
 	RemoteSourceAuthTypeOauth2   RemoteSourceAuthType = "oauth2"
 )
 
-const (
-	RemoteSourceKind    = "remotesource"
-	RemoteSourceVersion = "v0.1.0"
-)
-
 type RemoteSource struct {
-	stypes.TypeMeta
-	stypes.ObjectMeta
+	sqlg.ObjectMeta
 
 	Name   string `json:"name,omitempty"`
 	APIURL string `json:"apiurl,omitempty"`
@@ -64,39 +55,14 @@ type RemoteSource struct {
 
 	SkipSSHHostKeyCheck bool `json:"skip_ssh_host_key_check,omitempty"`
 
-	RegistrationEnabled *bool `json:"registration_enabled,omitempty"`
-	LoginEnabled        *bool `json:"login_enabled,omitempty"`
+	RegistrationEnabled bool `json:"registration_enabled,omitempty"`
+	LoginEnabled        bool `json:"login_enabled,omitempty"`
 }
 
-func NewRemoteSource() *RemoteSource {
+func NewRemoteSource(tx *sql.Tx) *RemoteSource {
 	return &RemoteSource{
-		TypeMeta: stypes.TypeMeta{
-			Kind:    RemoteSourceKind,
-			Version: RemoteSourceVersion,
-		},
-		ObjectMeta: stypes.ObjectMeta{
-			ID: uuid.Must(uuid.NewV4()).String(),
-		},
+		ObjectMeta: sqlg.NewObjectMeta(tx),
 	}
-}
-
-func (rs *RemoteSource) UnmarshalJSON(b []byte) error {
-	type remoteSource RemoteSource
-
-	trs := (*remoteSource)(rs)
-
-	if err := json.Unmarshal(b, &trs); err != nil {
-		return errors.WithStack(err)
-	}
-
-	if trs.RegistrationEnabled == nil {
-		trs.RegistrationEnabled = util.BoolP(true)
-	}
-	if trs.LoginEnabled == nil {
-		trs.LoginEnabled = util.BoolP(true)
-	}
-
-	return nil
 }
 
 func SourceSupportedAuthTypes(rsType RemoteSourceType) []RemoteSourceAuthType {

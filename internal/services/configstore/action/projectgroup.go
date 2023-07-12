@@ -19,9 +19,9 @@ import (
 	"path"
 	"strings"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/sql"
+	"github.com/sorintlab/errors"
 
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/configstore/types"
 )
@@ -165,7 +165,7 @@ func (h *ActionHandler) CreateProjectGroup(ctx context.Context, req *CreateUpdat
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("project group with name %q, path %q already exists", req.Name, pp))
 		}
 
-		projectGroup = types.NewProjectGroup()
+		projectGroup = types.NewProjectGroup(tx)
 		projectGroup.Name = req.Name
 		projectGroup.Parent = req.Parent
 		projectGroup.Visibility = req.Visibility

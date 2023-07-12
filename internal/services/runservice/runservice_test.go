@@ -17,47 +17,50 @@ package runservice
 import (
 	"bytes"
 	"context"
-	"io/ioutil"
+	"io"
 	"net"
-	"path/filepath"
+	"os"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
-	"agola.io/agola/internal/errors"
+	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/objectstorage"
 	"agola.io/agola/internal/services/config"
 	"agola.io/agola/internal/services/runservice/action"
 	"agola.io/agola/internal/services/runservice/common"
 	"agola.io/agola/internal/services/runservice/store"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/testutil"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/runservice/types"
-
-	"github.com/rs/zerolog"
 )
 
 func setupRunservice(ctx context.Context, t *testing.T, log zerolog.Logger, dir string) *Runservice {
-	listenAddress, port, err := testutil.GetFreePort(true, false)
+	port, err := testutil.GetFreePort("localhost", true, false)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 
-	ostDir, err := ioutil.TempDir(dir, "ost")
+	ostDir, err := os.MkdirTemp(dir, "ost")
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	rsDir, err := ioutil.TempDir(dir, "rs")
+	rsDir, err := os.MkdirTemp(dir, "rs")
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
+
+	dbType := testutil.DBType(t)
+	_, _, dbConnString := testutil.CreateDB(t, log, ctx, dir)
 
 	baseConfig := config.Runservice{
 		DB: config.DB{
-			Type:       sql.Sqlite3,
-			ConnString: filepath.Join(dir, "db"),
+			Type:       dbType,
+			ConnString: dbConnString,
 		},
 		ObjectStorage: config.ObjectStorage{
 			Type: config.ObjectStorageTypePosix,
@@ -67,7 +70,7 @@ func setupRunservice(ctx context.Context, t *testing.T, log zerolog.Logger, dir 
 	}
 	rsConfig := baseConfig
 	rsConfig.DataDir = rsDir
-	rsConfig.Web.ListenAddress = net.JoinHostPort(listenAddress, port)
+	rsConfig.Web.ListenAddress = net.JoinHostPort("localhost", port)
 
 	rs, err := NewRunservice(ctx, log, &rsConfig)
 	if err != nil {
@@ -103,6 +106,8 @@ func compareRuns(r1, r2 []*types.Run) bool {
 }
 
 func TestExportImport(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	ctx := context.Background()
 	log := testutil.NewLogger(t)
@@ -176,6 +181,27 @@ func TestExportImport(t *testing.T) {
 }
 
 func TestConcurrentRunCreation(t *testing.T) {
+	t.Parallel()
+
+	// TODO(sgotti) Postgres currently (as of v15) returns unique constraint
+	// errors hiding serializable errors also if we check for the existance
+	// before the insert.
+	// If we have a not existing runcounter for groupid and multiple concurrent
+	// transactions try to insert the new runcounter only one will succeed and
+	// the others will receive a unique constraint violation error instead of a
+	// serialization error and won't by retried
+	// During an update of an already existing runcounter instead a serialiation
+	// error will be returned.
+	//
+	// This is probably related to this issue with multiple unique indexes
+	// https://www.postgresql.org/message-id/flat/CAGPCyEZG76zjv7S31v_xPeLNRuzj-m%3DY2GOY7PEzu7vhB%3DyQog%40mail.gmail.com
+	//
+	// for now skip this test on posgres
+	dbType := testutil.DBType(t)
+	if dbType == sql.Postgres {
+		t.SkipNow()
+	}
+
 	dir := t.TempDir()
 	ctx := context.Background()
 	log := testutil.NewLogger(t)
@@ -230,6 +256,8 @@ func TestConcurrentRunCreation(t *testing.T) {
 }
 
 func TestGetRunsLastRun(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	ctx := context.Background()
 	log := testutil.NewLogger(t)
@@ -275,16 +303,18 @@ func TestGetRunsLastRun(t *testing.T) {
 	for i, er := range expectedRuns {
 		r := runs[i]
 		if r.Group != er.Group {
-			t.Fatalf("expected run group %q runs, got %q", r.Group, er.Group)
+			t.Fatalf("expected run group %q, got %q", r.Group, er.Group)
 		}
 
 		if r.Sequence != er.Sequence {
-			t.Fatalf("expected run sequence %d runs, got %d", er.Sequence, r.Sequence)
+			t.Fatalf("expected run sequence %d, got %d", er.Sequence, r.Sequence)
 		}
 	}
 }
 
 func TestLogleaner(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	ctx := context.Background()
 	log := testutil.NewLogger(t)
@@ -292,7 +322,7 @@ func TestLogleaner(t *testing.T) {
 	rs := setupRunservice(ctx, t, log, dir)
 	rs.c.RunCacheExpireInterval = 604800000000000
 
-	body := ioutil.NopCloser(bytes.NewBufferString("log test"))
+	body := io.NopCloser(bytes.NewBufferString("log test"))
 	logPath := store.OSTRunTaskStepLogPath("task01", 0)
 
 	err := rs.ost.WriteObject(logPath, body, -1, false)

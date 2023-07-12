@@ -17,15 +17,15 @@ package driver
 import (
 	"bytes"
 	"context"
-	"io/ioutil"
+	"io"
 	"os"
 	"reflect"
 	"testing"
 	"time"
 
-	"agola.io/agola/internal/testutil"
-
 	"github.com/gofrs/uuid"
+
+	"agola.io/agola/internal/testutil"
 )
 
 func TestK8sPod(t *testing.T) {
@@ -57,13 +57,13 @@ func TestK8sPod(t *testing.T) {
 			ID:     uuid.Must(uuid.NewV4()).String(),
 			TaskID: uuid.Must(uuid.NewV4()).String(),
 			Containers: []*ContainerConfig{
-				&ContainerConfig{
+				{
 					Cmd:   []string{"cat"},
 					Image: "busybox",
 				},
 			},
 			InitVolumeDir: "/tmp/agola",
-		}, ioutil.Discard)
+		}, io.Discard)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -75,13 +75,13 @@ func TestK8sPod(t *testing.T) {
 			ID:     uuid.Must(uuid.NewV4()).String(),
 			TaskID: uuid.Must(uuid.NewV4()).String(),
 			Containers: []*ContainerConfig{
-				&ContainerConfig{
+				{
 					Cmd:   []string{"cat"},
 					Image: "busybox",
 				},
 			},
 			InitVolumeDir: "/tmp/agola",
-		}, ioutil.Discard)
+		}, io.Discard)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -115,14 +115,14 @@ func TestK8sPod(t *testing.T) {
 			ID:     uuid.Must(uuid.NewV4()).String(),
 			TaskID: uuid.Must(uuid.NewV4()).String(),
 			Containers: []*ContainerConfig{
-				&ContainerConfig{
+				{
 					Cmd:   []string{"cat"},
 					Image: "busybox",
 					Env:   env,
 				},
 			},
 			InitVolumeDir: "/tmp/agola",
-		}, ioutil.Discard)
+		}, io.Discard)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -167,16 +167,16 @@ func TestK8sPod(t *testing.T) {
 			ID:     uuid.Must(uuid.NewV4()).String(),
 			TaskID: uuid.Must(uuid.NewV4()).String(),
 			Containers: []*ContainerConfig{
-				&ContainerConfig{
+				{
 					Cmd:   []string{"cat"},
 					Image: "busybox",
 				},
-				&ContainerConfig{
+				{
 					Image: "nginx:1.16",
 				},
 			},
 			InitVolumeDir: "/tmp/agola",
-		}, ioutil.Discard)
+		}, io.Discard)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -188,16 +188,16 @@ func TestK8sPod(t *testing.T) {
 			ID:     uuid.Must(uuid.NewV4()).String(),
 			TaskID: uuid.Must(uuid.NewV4()).String(),
 			Containers: []*ContainerConfig{
-				&ContainerConfig{
+				{
 					Cmd:   []string{"cat"},
 					Image: "busybox",
 				},
-				&ContainerConfig{
+				{
 					Image: "nginx:1.16",
 				},
 			},
 			InitVolumeDir: "/tmp/agola",
-		}, ioutil.Discard)
+		}, io.Discard)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -229,13 +229,13 @@ func TestK8sPod(t *testing.T) {
 			ID:     uuid.Must(uuid.NewV4()).String(),
 			TaskID: uuid.Must(uuid.NewV4()).String(),
 			Containers: []*ContainerConfig{
-				&ContainerConfig{
+				{
 					Cmd:   []string{"cat"},
 					Image: "busybox",
 				},
 			},
 			InitVolumeDir: "/tmp/agola",
-		}, ioutil.Discard)
+		}, io.Discard)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -262,7 +262,7 @@ func TestK8sPod(t *testing.T) {
 			ID:     uuid.Must(uuid.NewV4()).String(),
 			TaskID: uuid.Must(uuid.NewV4()).String(),
 			Containers: []*ContainerConfig{
-				&ContainerConfig{
+				{
 					Cmd:   []string{"cat"},
 					Image: "busybox",
 					Volumes: []Volume{
@@ -276,7 +276,7 @@ func TestK8sPod(t *testing.T) {
 				},
 			},
 			InitVolumeDir: "/tmp/agola",
-		}, ioutil.Discard)
+		}, io.Discard)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -306,7 +306,7 @@ func TestK8sPod(t *testing.T) {
 			ID:     uuid.Must(uuid.NewV4()).String(),
 			TaskID: uuid.Must(uuid.NewV4()).String(),
 			Containers: []*ContainerConfig{
-				&ContainerConfig{
+				{
 					Cmd:   []string{"cat"},
 					Image: "busybox",
 					Volumes: []Volume{
@@ -326,7 +326,7 @@ func TestK8sPod(t *testing.T) {
 				},
 			},
 			InitVolumeDir: "/tmp/agola",
-		}, ioutil.Discard)
+		}, io.Discard)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -335,7 +335,7 @@ func TestK8sPod(t *testing.T) {
 		var buf bytes.Buffer
 		ce, err := pod.Exec(ctx, &ExecConfig{
 			// k8s doesn't set size=1024k in the tmpf mount options but uses other modes to detect the size
-			Cmd:    []string{"sh", "-c", "if [ $(grep -c /mnt/vol1 /proc/mounts) -ne 1 -o $(grep -c /mnt/vol2 /proc/mounts) ]; then exit 1; fi"},
+			Cmd:    []string{"sh", "-c", "if [ $(grep -c /mnt/vol1 /proc/mounts) -ne 1 -o $(grep -c /mnt/vol2 /proc/mounts) -ne 1 ]; then exit 1; fi"},
 			Stdout: &buf,
 		})
 		if err != nil {

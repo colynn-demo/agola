@@ -16,17 +16,17 @@ package cmd
 
 import (
 	"context"
-	"io/ioutil"
+	"io"
 	"os"
-
-	config "agola.io/agola/internal/config"
-	"agola.io/agola/internal/errors"
-	gwapitypes "agola.io/agola/services/gateway/api/types"
-	gwclient "agola.io/agola/services/gateway/client"
 
 	"github.com/ghodss/yaml"
 	"github.com/rs/zerolog/log"
+	"github.com/sorintlab/errors"
 	"github.com/spf13/cobra"
+
+	config "agola.io/agola/internal/config"
+	gwapitypes "agola.io/agola/services/gateway/api/types"
+	gwclient "agola.io/agola/services/gateway/client"
 )
 
 var cmdProjectVariableCreate = &cobra.Command{
@@ -103,12 +103,12 @@ func variableCreate(cmd *cobra.Command, ownertype string, args []string) error {
 	var data []byte
 	var err error
 	if variableCreateOpts.file == "-" {
-		data, err = ioutil.ReadAll(os.Stdin)
+		data, err = io.ReadAll(os.Stdin)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 	} else {
-		data, err = ioutil.ReadFile(variableCreateOpts.file)
+		data, err = os.ReadFile(variableCreateOpts.file)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -116,7 +116,7 @@ func variableCreate(cmd *cobra.Command, ownertype string, args []string) error {
 
 	var values []VariableValue
 	if err := yaml.Unmarshal(data, &values); err != nil {
-		log.Fatal().Msgf("failed to unmarshal values: %v", err)
+		return errors.Wrapf(err, "failed to unmarshal secret")
 	}
 	rvalues := []gwapitypes.VariableValueRequest{}
 	for _, value := range values {

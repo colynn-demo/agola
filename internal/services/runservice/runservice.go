@@ -21,20 +21,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/mux"
+	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
+
 	scommon "agola.io/agola/internal/common"
-	idb "agola.io/agola/internal/db"
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/lock"
 	"agola.io/agola/internal/objectstorage"
+	"agola.io/agola/internal/services/common"
 	"agola.io/agola/internal/services/config"
+	"agola.io/agola/internal/services/handlers"
 	"agola.io/agola/internal/services/runservice/action"
 	"agola.io/agola/internal/services/runservice/api"
 	"agola.io/agola/internal/services/runservice/db"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/sqlg/lock"
+	"agola.io/agola/internal/sqlg/manager"
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
-
-	"github.com/gorilla/mux"
-	"github.com/rs/zerolog"
 )
 
 func (s *Runservice) maintenanceModeWatcherLoop(ctx context.Context, runCtxCancel context.CancelFunc, maintenanceModeEnabled bool) {
@@ -116,12 +118,14 @@ func NewRunservice(ctx context.Context, log zerolog.Logger, c *config.Runservice
 	case sql.Postgres:
 		lf = lock.NewPGLockFactory(sdb)
 	default:
-		return nil, errors.Errorf("unknown type %q", c.DB.Type)
+		return nil, errors.Errorf("unknown db type %q", c.DB.Type)
 	}
 	s.lf = lf
 
-	if err := idb.Setup(ctx, log, d, lf); err != nil {
-		return nil, errors.Wrapf(err, "create db error")
+	dbm := manager.NewDBManager(log, d, lf)
+
+	if err := common.SetupDB(ctx, dbm); err != nil {
+		return nil, errors.Wrap(err, "failed to setup db")
 	}
 
 	ah := action.NewActionHandler(log, d, ost, lf)
@@ -131,6 +135,7 @@ func NewRunservice(ctx context.Context, log zerolog.Logger, c *config.Runservice
 }
 
 func (s *Runservice) setupDefaultRouter(etCh chan string) http.Handler {
+	maintenanceStatusHandler := api.NewMaintenanceStatusHandler(s.log, s.ah, false)
 	maintenanceModeHandler := api.NewMaintenanceModeHandler(s.log, s.ah)
 	exportHandler := api.NewExportHandler(s.log, s.ah)
 	importHandler := api.NewImportHandler(s.log, s.ah)
@@ -161,8 +166,12 @@ func (s *Runservice) setupDefaultRouter(etCh chan string) http.Handler {
 
 	changeGroupsUpdateTokensHandler := api.NewChangeGroupsUpdateTokensHandler(s.log, s.d, s.ah)
 
+	authHandler := handlers.NewInternalAuthChecker(s.log, s.c.APIToken)
+
 	router := mux.NewRouter().UseEncodedPath().SkipClean(true)
 	apirouter := router.PathPrefix("/api/v1alpha").Subrouter().UseEncodedPath().SkipClean(true)
+
+	apirouter.Use(authHandler)
 
 	// don't return 404 on a call to an undefined handler but 400 to distinguish between a non existent resource and a wrong method
 	apirouter.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadRequest) })
@@ -193,6 +202,7 @@ func (s *Runservice) setupDefaultRouter(etCh chan string) http.Handler {
 
 	apirouter.Handle("/changegroups", changeGroupsUpdateTokensHandler).Methods("GET")
 
+	apirouter.Handle("/maintenance", maintenanceStatusHandler).Methods("GET")
 	apirouter.Handle("/maintenance", maintenanceModeHandler).Methods("PUT", "DELETE")
 
 	apirouter.Handle("/export", exportHandler).Methods("GET")
@@ -208,6 +218,7 @@ func (s *Runservice) setupDefaultRouter(etCh chan string) http.Handler {
 }
 
 func (s *Runservice) setupMaintenanceRouter() http.Handler {
+	maintenanceStatusHandler := api.NewMaintenanceStatusHandler(s.log, s.ah, true)
 	maintenanceModeHandler := api.NewMaintenanceModeHandler(s.log, s.ah)
 	exportHandler := api.NewExportHandler(s.log, s.ah)
 	importHandler := api.NewImportHandler(s.log, s.ah)
@@ -215,6 +226,7 @@ func (s *Runservice) setupMaintenanceRouter() http.Handler {
 	router := mux.NewRouter()
 	apirouter := router.PathPrefix("/api/v1alpha").Subrouter().UseEncodedPath()
 
+	apirouter.Handle("/maintenance", maintenanceStatusHandler).Methods("GET")
 	apirouter.Handle("/maintenance", maintenanceModeHandler).Methods("PUT", "DELETE")
 
 	apirouter.Handle("/export", exportHandler).Methods("GET")

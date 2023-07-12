@@ -17,9 +17,9 @@ package action
 import (
 	"context"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/sql"
+	"github.com/sorintlab/errors"
 
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/configstore/types"
 )
@@ -71,8 +71,8 @@ type CreateUpdateRemoteSourceRequest struct {
 	Oauth2ClientSecret  string
 	SSHHostKey          string
 	SkipSSHHostKeyCheck bool
-	RegistrationEnabled *bool
-	LoginEnabled        *bool
+	RegistrationEnabled bool
+	LoginEnabled        bool
 }
 
 func (h *ActionHandler) CreateRemoteSource(ctx context.Context, req *CreateUpdateRemoteSourceRequest) (*types.RemoteSource, error) {
@@ -91,7 +91,7 @@ func (h *ActionHandler) CreateRemoteSource(ctx context.Context, req *CreateUpdat
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("remotesource %q already exists", req.Name))
 		}
 
-		remoteSource = types.NewRemoteSource()
+		remoteSource = types.NewRemoteSource(tx)
 		remoteSource.Name = req.Name
 		remoteSource.APIURL = req.APIURL
 		remoteSource.SkipVerify = req.SkipVerify

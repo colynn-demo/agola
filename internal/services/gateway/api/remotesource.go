@@ -19,14 +19,14 @@ import (
 	"net/http"
 	"strconv"
 
-	"agola.io/agola/internal/errors"
+	"github.com/gorilla/mux"
+	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/services/gateway/action"
 	"agola.io/agola/internal/util"
 	cstypes "agola.io/agola/services/configstore/types"
 	gwapitypes "agola.io/agola/services/gateway/api/types"
-	"github.com/rs/zerolog"
-
-	"github.com/gorilla/mux"
 )
 
 type CreateRemoteSourceHandler struct {
@@ -124,8 +124,8 @@ func createRemoteSourceResponse(r *cstypes.RemoteSource) *gwapitypes.RemoteSourc
 		ID:                  r.ID,
 		Name:                r.Name,
 		AuthType:            string(r.AuthType),
-		RegistrationEnabled: *r.RegistrationEnabled,
-		LoginEnabled:        *r.LoginEnabled,
+		RegistrationEnabled: r.RegistrationEnabled,
+		LoginEnabled:        r.LoginEnabled,
 	}
 	return rs
 }

@@ -17,11 +17,11 @@ package api
 import (
 	"net/http"
 
+	"github.com/rs/zerolog"
+
 	"agola.io/agola/internal/services/gateway/action"
 	"agola.io/agola/internal/util"
 	gwapitypes "agola.io/agola/services/gateway/api/types"
-
-	"github.com/rs/zerolog"
 )
 
 type OAuth2CallbackHandler struct {
@@ -62,9 +62,12 @@ func (h *OAuth2CallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 	case action.RemoteSourceRequestTypeLoginUser:
 		authresp := cresp.Response.(*action.LoginUserResponse)
+
+		http.SetCookie(w, authresp.Cookie)
+		http.SetCookie(w, authresp.SecondaryCookie)
+
 		response = &gwapitypes.LoginUserResponse{
-			Token: authresp.Token,
-			User:  createUserResponse(authresp.User),
+			User: createUserResponse(authresp.User),
 		}
 
 	case action.RemoteSourceRequestTypeAuthorize:

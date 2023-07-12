@@ -20,18 +20,18 @@ import (
 	"reflect"
 	"time"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/lock"
+	"github.com/gofrs/uuid"
+	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/objectstorage"
 	"agola.io/agola/internal/runconfig"
 	"agola.io/agola/internal/services/runservice/common"
 	"agola.io/agola/internal/services/runservice/db"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/sqlg/lock"
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/runservice/types"
-
-	"github.com/gofrs/uuid"
-	"github.com/rs/zerolog"
 )
 
 type ActionHandler struct {
@@ -90,7 +90,7 @@ func (h *ActionHandler) GetChangeGroupsUpdateTokens(tx *sql.Tx, changeGroupsName
 
 		// create and insert non existing changegroup
 		if !found {
-			newChangeGroup := types.NewChangeGroup()
+			newChangeGroup := types.NewChangeGroup(tx)
 			newChangeGroup.Name = changeGroupName
 			newChangeGroup.Value = uuid.Must(uuid.NewV4()).String()
 
@@ -169,8 +169,13 @@ func (h *ActionHandler) ChangeRunPhase(ctx context.Context, req *RunChangePhaseR
 			return errors.Errorf("unsupport change phase %q", req.Phase)
 		}
 
+		rc, err := h.d.GetRunConfig(tx, run.RunConfigID)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+
 		run.ChangePhase(req.Phase)
-		runEvent, err := common.NewRunEvent(h.d, tx, run.ID, run.Phase, run.Result)
+		runEvent, err := common.NewRunEvent(h.d, tx, run, rc, types.RunPhaseChanged)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -303,7 +308,7 @@ func (h *ActionHandler) newRun(ctx context.Context, req *RunCreateRequest) (*typ
 		}
 	}
 
-	rc := types.NewRunConfig()
+	rc := types.NewRunConfig(nil)
 	rc.Name = req.Name
 	rc.Group = req.Group
 	rc.SetupErrors = setupErrors
@@ -380,7 +385,7 @@ func recreateRun(uuid util.UUIDGenerator, run *types.Run, rc *types.RunConfig, n
 	// update the run config ID
 	rc.ID = newRunConfigID
 	// reset run config revision
-	// TODO(sgott) this isn't very clean. We're doing this since we're taking an existing run config and changing only some fields
+	// TODO(sgotti) this isn't very clean. We're doing this since we're taking an existing run config and changing only some fields
 	rc.Revision = 0
 	// update the run config Environment
 	rc.Environment = req.Environment
@@ -388,7 +393,7 @@ func recreateRun(uuid util.UUIDGenerator, run *types.Run, rc *types.RunConfig, n
 	// update the run ID
 	run.ID = newRunID
 	// reset run revision
-	// TODO(sgott) this isn't very clean. We're doing this since we're taking an existing run and changing only some fields
+	// TODO(sgotti) this isn't very clean. We're doing this since we're taking an existing run and changing only some fields
 	run.Revision = 0
 	// reset phase/result/archived/stop
 	run.RunConfigID = rc.ID
@@ -508,17 +513,16 @@ func (h *ActionHandler) saveRun(ctx context.Context, rb *types.RunBundle, runcgt
 	err = h.d.Do(ctx, func(tx *sql.Tx) error {
 		var err error
 
+		// set objects tx id, revision since they were created outside the transaction
+		run.TxID = tx.ID()
+		run.Revision = 0
+
+		rc.TxID = tx.ID()
+		rc.Revision = 0
+
 		if err := h.UpdateChangeGroups(tx, runcgt); err != nil {
 			return errors.WithStack(err)
 		}
-
-		// generate a new run sequence
-		runSequence, err := h.d.NextSequence(tx, types.SequenceTypeRun)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-
-		run.Sequence = runSequence
 
 		// generate a new run counter
 		runCounter, err := h.d.NextRunCounter(tx, runCounterGroupID)
@@ -528,15 +532,15 @@ func (h *ActionHandler) saveRun(ctx context.Context, rb *types.RunBundle, runcgt
 
 		run.Counter = runCounter
 
-		runEvent, err := common.NewRunEvent(h.d, tx, run.ID, run.Phase, run.Result)
+		runEvent, err := common.NewRunEvent(h.d, tx, run, rc, types.RunPhaseChanged)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 
-		if err := h.d.InsertRun(tx, run); err != nil {
+		if err := h.d.InsertRunConfig(tx, rc); err != nil {
 			return errors.WithStack(err)
 		}
-		if err := h.d.InsertRunConfig(tx, rc); err != nil {
+		if err := h.d.InsertRun(tx, run); err != nil {
 			return errors.WithStack(err)
 		}
 		if err := h.d.InsertRunEvent(tx, runEvent); err != nil {
@@ -589,7 +593,7 @@ func genRunTask(rct *types.RunConfigTask) *types.RunTask {
 }
 
 func genRun(rc *types.RunConfig) *types.Run {
-	r := types.NewRun()
+	r := types.NewRun(nil)
 	r.RunConfigID = rc.ID
 	r.Name = rc.Name
 	r.Group = rc.Group
@@ -603,9 +607,9 @@ func genRun(rc *types.RunConfig) *types.Run {
 		return r
 	}
 
-	for _, rct := range rc.Tasks {
+	for id, rct := range rc.Tasks {
 		rt := genRunTask(rct)
-		r.Tasks[rt.ID] = rt
+		r.Tasks[id] = rt
 	}
 
 	return r
@@ -722,8 +726,14 @@ func (h *ActionHandler) getRunCounterGroupID(group string) (string, error) {
 	return pl[1], nil
 }
 
-func (h *ActionHandler) GetExecutorTask(ctx context.Context, etID string) (*types.ExecutorTask, error) {
+type GetExecutorTaskResponse struct {
+	Et         *types.ExecutorTask
+	EtSpecData *types.ExecutorTaskSpecData
+}
+
+func (h *ActionHandler) GetExecutorTask(ctx context.Context, etID string) (*GetExecutorTaskResponse, error) {
 	var et *types.ExecutorTask
+	var etSpecData *types.ExecutorTaskSpecData
 	err := h.d.Do(ctx, func(tx *sql.Tx) error {
 		var err error
 
@@ -735,12 +745,12 @@ func (h *ActionHandler) GetExecutorTask(ctx context.Context, etID string) (*type
 			return util.NewAPIError(util.ErrNotExist, errors.Errorf("executor task %q not found", etID))
 		}
 
-		r, err := h.d.GetRun(tx, et.Spec.RunID)
+		r, err := h.d.GetRun(tx, et.RunID)
 		if err != nil {
-			return errors.Wrapf(err, "cannot get run %q", et.Spec.RunID)
+			return errors.Wrapf(err, "cannot get run %q", et.RunID)
 		}
 		if r == nil {
-			return errors.Errorf("run %q does not exists", et.Spec.RunID)
+			return errors.Errorf("run %q does not exists", et.RunID)
 		}
 
 		rc, err := h.d.GetRunConfig(tx, r.RunConfigID)
@@ -751,13 +761,13 @@ func (h *ActionHandler) GetExecutorTask(ctx context.Context, etID string) (*type
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("runconfig %q doesn't exist", r.RunConfigID))
 		}
 
-		rt, ok := r.Tasks[et.Spec.RunTaskID]
+		rt, ok := r.Tasks[et.RunTaskID]
 		if !ok {
-			return errors.Errorf("no such run task with id %s for run %s", et.Spec.RunTaskID, r.ID)
+			return errors.Errorf("no such run task with id %s for run %s", et.RunTaskID, r.ID)
 		}
 
 		// generate ExecutorTaskSpecData
-		et.Spec.ExecutorTaskSpecData = common.GenExecutorTaskSpecData(r, rt, rc)
+		etSpecData = common.GenExecutorTaskSpecData(r, rt, rc)
 
 		return nil
 	})
@@ -765,26 +775,26 @@ func (h *ActionHandler) GetExecutorTask(ctx context.Context, etID string) (*type
 		return nil, errors.WithStack(err)
 	}
 
-	return et, nil
+	return &GetExecutorTaskResponse{et, etSpecData}, nil
 }
 
-func (h *ActionHandler) GetExecutorTasks(ctx context.Context, executorID string) ([]*types.ExecutorTask, error) {
-	var ets []*types.ExecutorTask
+func (h *ActionHandler) GetExecutorTasks(ctx context.Context, executorID string) ([]*GetExecutorTaskResponse, error) {
+	var res []*GetExecutorTaskResponse
 	err := h.d.Do(ctx, func(tx *sql.Tx) error {
 		var err error
 
-		ets, err = h.d.GetExecutorTasksByExecutor(tx, executorID)
+		ets, err := h.d.GetExecutorTasksByExecutor(tx, executorID)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 
 		for _, et := range ets {
-			r, err := h.d.GetRun(tx, et.Spec.RunID)
+			r, err := h.d.GetRun(tx, et.RunID)
 			if err != nil {
-				return errors.Wrapf(err, "cannot get run %q", et.Spec.RunID)
+				return errors.Wrapf(err, "cannot get run %q", et.RunID)
 			}
 			if r == nil {
-				return errors.Errorf("run %q does not exists", et.Spec.RunID)
+				return errors.Errorf("run %q does not exists", et.RunID)
 			}
 
 			rc, err := h.d.GetRunConfig(tx, r.RunConfigID)
@@ -795,13 +805,14 @@ func (h *ActionHandler) GetExecutorTasks(ctx context.Context, executorID string)
 				return util.NewAPIError(util.ErrBadRequest, errors.Errorf("runconfig %q doesn't exist", r.RunConfigID))
 			}
 
-			rt, ok := r.Tasks[et.Spec.RunTaskID]
+			rt, ok := r.Tasks[et.RunTaskID]
 			if !ok {
-				return errors.Errorf("no such run task with id %s for run %s", et.Spec.RunTaskID, r.ID)
+				return errors.Errorf("no such run task with id %s for run %s", et.RunTaskID, r.ID)
 			}
 
 			// generate ExecutorTaskSpecData
-			et.Spec.ExecutorTaskSpecData = common.GenExecutorTaskSpecData(r, rt, rc)
+			etSpecData := common.GenExecutorTaskSpecData(r, rt, rc)
+			res = append(res, &GetExecutorTaskResponse{et, etSpecData})
 		}
 
 		return nil
@@ -810,5 +821,5 @@ func (h *ActionHandler) GetExecutorTasks(ctx context.Context, executorID string)
 		return nil, errors.WithStack(err)
 	}
 
-	return ets, nil
+	return res, nil
 }

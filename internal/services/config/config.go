@@ -15,14 +15,14 @@
 package config
 
 import (
-	"io/ioutil"
+	"os"
 	"time"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/sql"
-	"agola.io/agola/internal/util"
-
+	"github.com/sorintlab/errors"
 	yaml "gopkg.in/yaml.v2"
+
+	"agola.io/agola/internal/sqlg/sql"
+	"agola.io/agola/internal/util"
 )
 
 const (
@@ -43,10 +43,8 @@ type Config struct {
 	Executor     Executor     `yaml:"executor"`
 	Configstore  Configstore  `yaml:"configstore"`
 	Gitserver    Gitserver    `yaml:"gitserver"`
-}
 
-type Gateway struct {
-	Debug bool `yaml:"debug"`
+	// Global urls to avoid repeating them for every service
 
 	// APIExposedURL is the gateway API exposed url i.e. https://myagola.example.com
 	APIExposedURL string `yaml:"apiExposedURL"`
@@ -59,10 +57,45 @@ type Gateway struct {
 	ConfigstoreURL string `yaml:"configstoreURL"`
 	GitserverURL   string `yaml:"gitserverURL"`
 
+	// InternalServicesAPIToken is a global api token for internal services (for
+	// both servers and clients)
+	// Used when a specific token isn't defined
+	InternalServicesAPIToken string `yaml:"internalServicesAPIToken"`
+
+	// Global internal services api tokens to avoid repeating them for every
+	// service (for both servers and clients)
+	// If empty their value will be set to InternalServicesAPIToken
+	RunserviceAPIToken  string `yaml:"runserviceAPIToken"`
+	ExecutorAPIToken    string `yaml:"executorAPIToken"`
+	ConfigstoreAPIToken string `yaml:"configstoreAPIToken"`
+	GitserverAPIToken   string `yaml:"gitserverAPIToken"`
+}
+
+type Gateway struct {
+	Debug bool `yaml:"debug"`
+
+	// APIExposedURL is the gateway API exposed url i.e. https://myagola.example.com
+	APIExposedURL string `yaml:"apiExposedURL"`
+
+	// WebExposedURL is the web interface exposed url i.e. https://myagola.example.com
+	// This is used for generating the redirect_url in oauth2 redirects
+	WebExposedURL string `yaml:"webExposedURL"`
+
+	RunserviceURL       string `yaml:"runserviceURL"`
+	RunserviceAPIToken  string `yaml:"runserviceAPIToken"`
+	ConfigstoreURL      string `yaml:"configstoreURL"`
+	ConfigstoreAPIToken string `yaml:"configstoreAPIToken"`
+	GitserverURL        string `yaml:"gitserverURL"`
+	GitserverAPIToken   string `yaml:"gitserverAPIToken"`
+
 	Web           Web           `yaml:"web"`
 	ObjectStorage ObjectStorage `yaml:"objectStorage"`
 
-	TokenSigning TokenSigning `yaml:"tokenSigning"`
+	TokenSigning  TokenSigning  `yaml:"tokenSigning"`
+	CookieSigning CookieSigning `yaml:"cookieSigning"`
+
+	// when true will not set __Host/__Secure and Secure cookies. Should be set only for local development over http
+	UnsecureCookies bool `yaml:"unsecureCookies"`
 
 	AdminToken string `yaml:"adminToken"`
 
@@ -72,7 +105,8 @@ type Gateway struct {
 type Scheduler struct {
 	Debug bool `yaml:"debug"`
 
-	RunserviceURL string `yaml:"runserviceURL"`
+	RunserviceURL      string `yaml:"runserviceURL"`
+	RunserviceAPIToken string `yaml:"runserviceAPIToken"`
 }
 
 type Notification struct {
@@ -82,10 +116,16 @@ type Notification struct {
 	// This is used for generating the redirect_url in oauth2 redirects
 	WebExposedURL string `yaml:"webExposedURL"`
 
-	RunserviceURL  string `yaml:"runserviceURL"`
-	ConfigstoreURL string `yaml:"configstoreURL"`
+	RunserviceURL      string `yaml:"runserviceURL"`
+	RunserviceAPIToken string `yaml:"runserviceAPIToken"`
+
+	ConfigstoreURL      string `yaml:"configstoreURL"`
+	ConfigstoreAPIToken string `yaml:"configstoreAPIToken"`
 
 	DB DB `yaml:"db"`
+
+	WebhookURL    string `yaml:"webhookURL"`
+	WebhookSecret string `yaml:"webhookSecret"`
 }
 
 type Runservice struct {
@@ -96,6 +136,10 @@ type Runservice struct {
 	DB DB `yaml:"db"`
 
 	Web Web `yaml:"web"`
+
+	APIToken string `yaml:"apiToken"`
+
+	ExecutorAPIToken string `yaml:"executorAPIToken"`
 
 	ObjectStorage ObjectStorage `yaml:"objectStorage"`
 
@@ -109,10 +153,14 @@ type Executor struct {
 
 	DataDir string `yaml:"dataDir"`
 
-	RunserviceURL string `yaml:"runserviceURL"`
-	ToolboxPath   string `yaml:"toolboxPath"`
+	RunserviceURL      string `yaml:"runserviceURL"`
+	RunserviceAPIToken string `yaml:"runserviceAPIToken"`
+
+	ToolboxPath string `yaml:"toolboxPath"`
 
 	Web Web `yaml:"web"`
+
+	APIToken string `yaml:"apiToken"`
 
 	Driver Driver `yaml:"driver"`
 
@@ -158,7 +206,10 @@ type Configstore struct {
 
 	DB DB `yaml:"db"`
 
-	Web           Web           `yaml:"web"`
+	Web Web `yaml:"web"`
+
+	APIToken string `yaml:"apiToken"`
+
 	ObjectStorage ObjectStorage `yaml:"objectStorage"`
 }
 
@@ -167,7 +218,10 @@ type Gitserver struct {
 
 	DataDir string `yaml:"dataDir"`
 
-	Web           Web           `yaml:"web"`
+	Web Web `yaml:"web"`
+
+	APIToken string `yaml:"apiToken"`
+
 	ObjectStorage ObjectStorage `yaml:"objectStorage"`
 
 	RepositoryCleanupInterval    time.Duration `yaml:"repositoryCleanupInterval"`
@@ -249,6 +303,11 @@ type TokenSigning struct {
 	PublicKeyPath string `yaml:"publicKeyPath"`
 }
 
+type CookieSigning struct {
+	Duration time.Duration `yaml:"duration"`
+	Key      string        `yaml:"key"`
+}
+
 type OrganizationMemberAddingMode string
 
 const (
@@ -264,43 +323,144 @@ func (vt OrganizationMemberAddingMode) IsValid() bool {
 	return false
 }
 
-var defaultConfig = Config{
-	ID: "agola",
-	Gateway: Gateway{
-		TokenSigning: TokenSigning{
-			Duration: 12 * time.Hour,
+var defaultConfig = func() *Config {
+	return &Config{
+		ID: "agola",
+		Gateway: Gateway{
+			TokenSigning: TokenSigning{
+				Duration: 12 * time.Hour,
+			},
+			CookieSigning: CookieSigning{
+				Duration: 12 * time.Hour,
+			},
+			OrganizationMemberAddingMode: defaultOrganizationMemberAddingMode,
 		},
-		OrganizationMemberAddingMode: defaultOrganizationMemberAddingMode,
-	},
-	Runservice: Runservice{
-		RunCacheExpireInterval:     7 * 24 * time.Hour,
-		RunWorkspaceExpireInterval: 7 * 24 * time.Hour,
-		RunLogExpireInterval:       30 * 24 * time.Hour,
-	},
-	Executor: Executor{
-		InitImage: InitImage{
-			Image: "busybox:stable",
+		Runservice: Runservice{
+			RunCacheExpireInterval:     7 * 24 * time.Hour,
+			RunWorkspaceExpireInterval: 7 * 24 * time.Hour,
+			RunLogExpireInterval:       30 * 24 * time.Hour,
 		},
-		ActiveTasksLimit: 2,
-	},
-	Gitserver: Gitserver{
-		RepositoryCleanupInterval:    24 * time.Hour,
-		RepositoryRefsExpireInterval: 30 * 24 * time.Hour,
-	},
+		Executor: Executor{
+			InitImage: InitImage{
+				Image: "busybox:stable",
+			},
+			ActiveTasksLimit: 2,
+		},
+		Gitserver: Gitserver{
+			RepositoryCleanupInterval:    24 * time.Hour,
+			RepositoryRefsExpireInterval: 30 * 24 * time.Hour,
+		},
+	}
 }
 
 func Parse(configFile string, componentsNames []string) (*Config, error) {
-	configData, err := ioutil.ReadFile(configFile)
+	configData, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
 
-	c := &defaultConfig
+	c := defaultConfig()
 	if err := yaml.Unmarshal(configData, &c); err != nil {
 		return nil, errors.WithStack(err)
 	}
 
+	// Use InternalServicesAPIToken for all internal services tokens without a value
+	if c.RunserviceAPIToken == "" {
+		c.RunserviceAPIToken = c.InternalServicesAPIToken
+	}
+	if c.ConfigstoreAPIToken == "" {
+		c.ConfigstoreAPIToken = c.InternalServicesAPIToken
+	}
+	if c.ExecutorAPIToken == "" {
+		c.ExecutorAPIToken = c.InternalServicesAPIToken
+	}
+	if c.GitserverAPIToken == "" {
+		c.GitserverAPIToken = c.InternalServicesAPIToken
+	}
+
+	// Use global values if service values are empty
+	if c.Gateway.APIExposedURL == "" {
+		c.Gateway.APIExposedURL = c.APIExposedURL
+	}
+	if c.Gateway.WebExposedURL == "" {
+		c.Gateway.WebExposedURL = c.WebExposedURL
+	}
+	if c.Gateway.RunserviceURL == "" {
+		c.Gateway.RunserviceURL = c.RunserviceURL
+	}
+	if c.Gateway.RunserviceAPIToken == "" {
+		c.Gateway.RunserviceAPIToken = c.RunserviceAPIToken
+	}
+	if c.Gateway.ConfigstoreURL == "" {
+		c.Gateway.ConfigstoreURL = c.ConfigstoreURL
+	}
+	if c.Gateway.ConfigstoreAPIToken == "" {
+		c.Gateway.ConfigstoreAPIToken = c.ConfigstoreAPIToken
+	}
+	if c.Gateway.GitserverURL == "" {
+		c.Gateway.GitserverURL = c.GitserverURL
+	}
+	if c.Gateway.GitserverAPIToken == "" {
+		c.Gateway.GitserverAPIToken = c.GitserverAPIToken
+	}
+
+	if c.Runservice.APIToken == "" {
+		c.Runservice.APIToken = c.RunserviceAPIToken
+	}
+	if c.Runservice.ExecutorAPIToken == "" {
+		c.Runservice.ExecutorAPIToken = c.ExecutorAPIToken
+	}
+
+	if c.Configstore.APIToken == "" {
+		c.Configstore.APIToken = c.ConfigstoreAPIToken
+	}
+
+	if c.Scheduler.RunserviceURL == "" {
+		c.Scheduler.RunserviceURL = c.RunserviceURL
+	}
+	if c.Scheduler.RunserviceAPIToken == "" {
+		c.Scheduler.RunserviceAPIToken = c.RunserviceAPIToken
+	}
+
+	if c.Notification.WebExposedURL == "" {
+		c.Notification.WebExposedURL = c.WebExposedURL
+	}
+	if c.Notification.RunserviceURL == "" {
+		c.Notification.RunserviceURL = c.RunserviceURL
+	}
+	if c.Notification.RunserviceAPIToken == "" {
+		c.Notification.RunserviceAPIToken = c.RunserviceAPIToken
+	}
+	if c.Notification.ConfigstoreURL == "" {
+		c.Notification.ConfigstoreURL = c.ConfigstoreURL
+	}
+	if c.Notification.ConfigstoreAPIToken == "" {
+		c.Notification.ConfigstoreAPIToken = c.ConfigstoreAPIToken
+	}
+
+	if c.Executor.APIToken == "" {
+		c.Executor.APIToken = c.ExecutorAPIToken
+	}
+	if c.Executor.RunserviceURL == "" {
+		c.Executor.RunserviceURL = c.RunserviceURL
+	}
+	if c.Executor.RunserviceAPIToken == "" {
+		c.Executor.RunserviceAPIToken = c.RunserviceAPIToken
+	}
+
+	if c.Gitserver.APIToken == "" {
+		c.Gitserver.APIToken = c.GitserverAPIToken
+	}
+
 	return c, Validate(c, componentsNames)
+}
+
+func validateCookieSigning(s *CookieSigning) error {
+	if s.Key == "" {
+		return errors.Errorf("empty cookie signing key")
+	}
+
+	return nil
 }
 
 func validateDB(db *DB) error {
@@ -368,6 +528,9 @@ func Validate(c *Config, componentsNames []string) error {
 		}
 		if c.Gateway.RunserviceURL == "" {
 			return errors.Errorf("gateway runserviceURL is empty")
+		}
+		if err := validateCookieSigning(&c.Gateway.CookieSigning); err != nil {
+			return errors.Wrap(err, "cookie signing configuration error")
 		}
 		if err := validateWeb(&c.Gateway.Web); err != nil {
 			return errors.Wrapf(err, "gateway web configuration error")

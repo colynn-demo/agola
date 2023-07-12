@@ -17,8 +17,9 @@ package action
 import (
 	"context"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/sql"
+	"github.com/sorintlab/errors"
+
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/configstore/types"
 )
@@ -123,7 +124,7 @@ func (h *ActionHandler) CreateSecret(ctx context.Context, req *CreateUpdateSecre
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("secret with name %q for %s with id %q already exists", req.Name, req.Parent.Kind, req.Parent.ID))
 		}
 
-		secret = types.NewSecret()
+		secret = types.NewSecret(tx)
 		secret.Name = req.Name
 		secret.Parent = req.Parent
 		secret.Type = req.Type

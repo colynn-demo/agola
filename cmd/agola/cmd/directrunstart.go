@@ -17,22 +17,22 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path"
 	"regexp"
 	"strings"
 	"unicode"
 
-	"agola.io/agola/internal/errors"
+	"github.com/ghodss/yaml"
+	"github.com/gofrs/uuid"
+	"github.com/rs/zerolog/log"
+	"github.com/sorintlab/errors"
+	"github.com/spf13/cobra"
+
 	gitsave "agola.io/agola/internal/git-save"
 	"agola.io/agola/internal/util"
 	gwapitypes "agola.io/agola/services/gateway/api/types"
 	gwclient "agola.io/agola/services/gateway/client"
-
-	"github.com/ghodss/yaml"
-	"github.com/gofrs/uuid"
-	"github.com/rs/zerolog/log"
-	"github.com/spf13/cobra"
 )
 
 var cmdDirectRunStart = &cobra.Command{
@@ -140,7 +140,7 @@ func directRunStart(cmd *cobra.Command, args []string) error {
 		// "github.com/ghodss/yaml" doesn't provide a streaming decoder
 		var data []byte
 		var err error
-		data, err = ioutil.ReadFile(varFile)
+		data, err = os.ReadFile(varFile)
 		if err != nil {
 			return errors.WithStack(err)
 		}

@@ -16,12 +16,11 @@ package objectstorage
 
 import (
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"agola.io/agola/internal/errors"
+	"github.com/sorintlab/errors"
 )
 
 // writeFileAtomicFunc atomically writes a file, it achieves this by creating a
@@ -30,7 +29,7 @@ import (
 // TODO(sgotti) remove left over tmp files if process crashes before calling
 // os.Remove
 func writeFileAtomicFunc(p, baseDir, tmpDir string, perm os.FileMode, persist bool, writeFunc func(f io.Writer) error) error {
-	f, err := ioutil.TempFile(tmpDir, "tmpfile")
+	f, err := os.CreateTemp(tmpDir, "tmpfile")
 	if err != nil {
 		return errors.WithStack(err)
 	}

@@ -26,14 +26,10 @@ import (
 	"strings"
 	"time"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/services/executor/registry"
-	"agola.io/agola/internal/util"
-	"agola.io/agola/services/types"
-
 	"github.com/docker/docker/pkg/archive"
 	"github.com/gofrs/uuid"
 	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -50,6 +46,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
 	utilexec "k8s.io/utils/exec"
+
+	"agola.io/agola/internal/services/executor/registry"
+	"agola.io/agola/internal/util"
+	"agola.io/agola/services/types"
 )
 
 const (
@@ -544,7 +544,7 @@ func (d *K8sDriver) NewPod(ctx context.Context, podConfig *PodConfig, out io.Wri
 	}
 
 	stdout := bytes.Buffer{}
-	err = exec.Stream(remotecommand.StreamOptions{
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 		Stdout: &stdout,
 		Stderr: out,
 	})
@@ -601,7 +601,7 @@ func (d *K8sDriver) NewPod(ctx context.Context, podConfig *PodConfig, out io.Wri
 	}
 
 	fmt.Fprintf(out, "extracting toolbox\n")
-	err = exec.Stream(remotecommand.StreamOptions{
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 		Stdin:  srcArchive,
 		Stdout: out,
 		Stderr: out,
@@ -630,7 +630,7 @@ func (d *K8sDriver) NewPod(ctx context.Context, podConfig *PodConfig, out io.Wri
 		return nil, errors.Wrapf(err, "failed to generate k8s client spdy executor for url %q, method: POST", req.URL())
 	}
 
-	err = exec.Stream(remotecommand.StreamOptions{
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 		Stdout: out,
 		Stderr: out,
 	})
@@ -780,7 +780,7 @@ func (p *K8sPod) Exec(ctx context.Context, execConfig *ExecConfig) (ContainerExe
 	}
 
 	go func() {
-		err := exec.Stream(remotecommand.StreamOptions{
+		err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 			Stdin:  stdin,
 			Stdout: execConfig.Stdout,
 			Stderr: execConfig.Stderr,

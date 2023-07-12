@@ -17,8 +17,8 @@ package config
 import (
 	"encoding/json"
 
-	"agola.io/agola/internal/errors"
 	"github.com/google/go-jsonnet"
+	"github.com/sorintlab/errors"
 )
 
 func execJsonnet(configData []byte, configContext *ConfigContext) ([]byte, error) {
@@ -29,7 +29,7 @@ func execJsonnet(configData []byte, configContext *ConfigContext) ([]byte, error
 	}
 
 	vm.TLACode("ctx", string(cj))
-	out, err := vm.EvaluateSnippet("", string(configData))
+	out, err := vm.EvaluateAnonymousSnippet("", string(configData))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to evaluate jsonnet config")
 	}

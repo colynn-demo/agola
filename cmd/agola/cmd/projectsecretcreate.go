@@ -16,16 +16,16 @@ package cmd
 
 import (
 	"context"
-	"io/ioutil"
+	"io"
 	"os"
-
-	"agola.io/agola/internal/errors"
-	gwapitypes "agola.io/agola/services/gateway/api/types"
-	gwclient "agola.io/agola/services/gateway/client"
 
 	"github.com/ghodss/yaml"
 	"github.com/rs/zerolog/log"
+	"github.com/sorintlab/errors"
 	"github.com/spf13/cobra"
+
+	gwapitypes "agola.io/agola/services/gateway/api/types"
+	gwclient "agola.io/agola/services/gateway/client"
 )
 
 var cmdProjectSecretCreate = &cobra.Command{
@@ -80,12 +80,12 @@ func secretCreate(cmd *cobra.Command, ownertype string, args []string) error {
 	var data []byte
 	var err error
 	if secretCreateOpts.file == "-" {
-		data, err = ioutil.ReadAll(os.Stdin)
+		data, err = io.ReadAll(os.Stdin)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 	} else {
-		data, err = ioutil.ReadFile(secretCreateOpts.file)
+		data, err = os.ReadFile(secretCreateOpts.file)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -93,7 +93,7 @@ func secretCreate(cmd *cobra.Command, ownertype string, args []string) error {
 
 	var secretData map[string]string
 	if err := yaml.Unmarshal(data, &secretData); err != nil {
-		log.Fatal().Msgf("failed to unmarshal secret: %v", err)
+		return errors.Wrapf(err, "failed to unmarshal secret")
 	}
 	req := &gwapitypes.CreateSecretRequest{
 		Name: secretCreateOpts.name,

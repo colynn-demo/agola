@@ -17,9 +17,9 @@ package action
 import (
 	"context"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/sql"
+	"github.com/sorintlab/errors"
 
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/configstore/types"
 )
@@ -96,7 +96,7 @@ func (h *ActionHandler) CreateVariable(ctx context.Context, req *CreateUpdateVar
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("variable with name %q for %s with id %q already exists", req.Name, req.Parent.Kind, req.Parent.ID))
 		}
 
-		variable = types.NewVariable()
+		variable = types.NewVariable(tx)
 		variable.Name = req.Name
 		variable.Parent = req.Parent
 		variable.Values = req.Values

@@ -23,16 +23,17 @@ import (
 	"strconv"
 	"time"
 
-	"agola.io/agola/internal/errors"
+	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/objectstorage"
 	"agola.io/agola/internal/runconfig"
+	rsapi "agola.io/agola/internal/services/runservice/api"
 	"agola.io/agola/internal/services/runservice/common"
 	"agola.io/agola/internal/services/runservice/store"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/runservice/types"
-
-	"github.com/rs/zerolog"
 )
 
 const (
@@ -91,7 +92,7 @@ func advanceRunTasks(log zerolog.Logger, curRun *types.Run, rc *types.RunConfig,
 		for _, rt := range newRun.Tasks {
 			isScheduled := false
 			for _, et := range scheduledExecutorTasks {
-				if rt.ID == et.Spec.RunTaskID {
+				if rt.ID == et.RunTaskID {
 					isScheduled = true
 				}
 			}
@@ -123,7 +124,7 @@ func advanceRunTasks(log zerolog.Logger, curRun *types.Run, rc *types.RunConfig,
 		if curRun.Result.IsSet() {
 			isScheduled := false
 			for _, et := range scheduledExecutorTasks {
-				if rt.ID == et.Spec.RunTaskID {
+				if rt.ID == et.RunTaskID {
 					isScheduled = true
 				}
 			}
@@ -262,9 +263,6 @@ func (s *Runservice) submitRunTasks(ctx context.Context, r *types.Run, rc *types
 			return nil
 		}
 
-		executorTask = common.GenExecutorTask(r, rt, rc, executor)
-		s.log.Debug().Msgf("et: %s", util.Dump(executorTask))
-
 		// check again that the executorTask for this runTask id wasn't already scheduled
 		// if not existing, save and submit it
 		var shouldSend bool
@@ -277,6 +275,9 @@ func (s *Runservice) submitRunTasks(ctx context.Context, r *types.Run, rc *types
 			if curExecutorTask != nil {
 				return nil
 			}
+
+			executorTask = common.GenExecutorTask(tx, r, rt, rc, executor)
+			s.log.Debug().Msgf("et: %s", util.Dump(executorTask))
 
 			if err := s.d.InsertExecutorTask(tx, executorTask); err != nil {
 				return errors.WithStack(err)
@@ -392,18 +393,18 @@ func (s *Runservice) sendExecutorTask(ctx context.Context, et *types.ExecutorTas
 	err := s.d.Do(ctx, func(tx *sql.Tx) error {
 		var err error
 
-		executor, err = s.d.GetExecutorByExecutorID(tx, et.Spec.ExecutorID)
+		executor, err = s.d.GetExecutorByExecutorID(tx, et.ExecutorID)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 
-		r, err = s.d.GetRun(tx, et.Spec.RunID)
+		r, err = s.d.GetRun(tx, et.RunID)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 
 		if r == nil {
-			return errors.Errorf("run with id %q doesn't exist", et.Spec.RunID)
+			return errors.Errorf("run with id %q doesn't exist", et.RunID)
 		}
 
 		rc, err = s.d.GetRunConfig(tx, r.RunConfigID)
@@ -422,32 +423,36 @@ func (s *Runservice) sendExecutorTask(ctx context.Context, et *types.ExecutorTas
 	}
 
 	if executor == nil {
-		s.log.Warn().Msgf("executor with id %q doesn't exist", et.Spec.ExecutorID)
+		s.log.Warn().Msgf("executor with id %q doesn't exist", et.ExecutorID)
 		return nil
 	}
 
-	rt, ok := r.Tasks[et.Spec.RunTaskID]
+	rt, ok := r.Tasks[et.RunTaskID]
 	if !ok {
-		return errors.Errorf("no such run task with id %s for run %s", et.Spec.RunTaskID, r.ID)
+		return errors.Errorf("no such run task with id %s for run %s", et.RunTaskID, r.ID)
 	}
-
-	// take a copy to not change the input executorTask
-	et = et.DeepCopy()
 
 	// generate ExecutorTaskSpecData
-	et.Spec.ExecutorTaskSpecData = common.GenExecutorTaskSpecData(r, rt, rc)
-
-	etj, err := json.Marshal(et)
+	etSpecData := common.GenExecutorTaskSpecData(r, rt, rc)
+	etRes := rsapi.GenExecutorTaskResponse(et, etSpecData)
+	etResj, err := json.Marshal(etRes)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 
-	req, err := http.Post(executor.ListenURL+"/api/v1alpha/executor", "", bytes.NewReader(etj))
+	req, err := http.NewRequestWithContext(ctx, "POST", executor.ListenURL+"/api/v1alpha/executor", bytes.NewReader(etResj))
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	if req.StatusCode != http.StatusOK {
-		return errors.Errorf("received http status: %d", req.StatusCode)
+	if s.c.ExecutorAPIToken != "" {
+		req.Header.Set("Authorization", "token "+s.c.ExecutorAPIToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("received http status: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -550,11 +555,19 @@ func (s *Runservice) scheduleRun(ctx context.Context, runID string) error {
 		return errors.WithStack(err)
 	}
 
+	curRunRevision := r.Revision
+	curScheduledExecutorTasksRevisions := map[string]uint64{}
+	for _, et := range scheduledExecutorTasks {
+		curScheduledExecutorTasksRevisions[et.ID] = et.Revision
+	}
 	err = s.d.Do(ctx, func(tx *sql.Tx) error {
 		// if the run is set to stop, stop all active tasks
 		if r.Stop {
 			for _, et := range scheduledExecutorTasks {
-				et.Spec.Stop = true
+				et.Stop = true
+
+				et.TxID = tx.ID()
+				et.Revision = curScheduledExecutorTasksRevisions[et.ID]
 				if err := s.d.UpdateExecutorTask(tx, et); err != nil {
 					return errors.WithStack(err)
 				}
@@ -572,13 +585,16 @@ func (s *Runservice) scheduleRun(ctx context.Context, runID string) error {
 			shouldSubmitRunTasks = true
 		}
 
+		r.TxID = tx.ID()
+		r.Revision = curRunRevision
+
 		if err := s.d.UpdateRun(tx, r); err != nil {
 			return errors.WithStack(err)
 		}
 
 		// detect changes to phase and result and set related events
 		if prevPhase != r.Phase || prevResult != r.Result {
-			runEvent, err := common.NewRunEvent(s.d, tx, r.ID, r.Phase, r.Result)
+			runEvent, err := common.NewRunEvent(s.d, tx, r, rc, types.RunPhaseChanged)
 			if err != nil {
 				return errors.WithStack(err)
 			}
@@ -705,13 +721,13 @@ func (s *Runservice) handleExecutorTaskUpdate(ctx context.Context, executorTaskI
 			return errors.Errorf("executor task with id %q doesn't exist", executorTaskID)
 		}
 
-		r, err = s.d.GetRun(tx, et.Spec.RunID)
+		r, err = s.d.GetRun(tx, et.RunID)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 
 		if r == nil {
-			return errors.Errorf("run with id %q doesn't exist", et.Spec.RunID)
+			return errors.Errorf("run with id %q doesn't exist", et.RunID)
 		}
 
 		if err := s.updateRunTaskStatus(et, r); err != nil {
@@ -733,16 +749,16 @@ func (s *Runservice) handleExecutorTaskUpdate(ctx context.Context, executorTaskI
 func (s *Runservice) updateRunTaskStatus(et *types.ExecutorTask, r *types.Run) error {
 	s.log.Debug().Msgf("et: %s", util.Dump(et))
 
-	rt, ok := r.Tasks[et.Spec.RunTaskID]
+	rt, ok := r.Tasks[et.RunTaskID]
 	if !ok {
-		return errors.Errorf("no such run task with id %s for run %s", et.Spec.RunTaskID, r.ID)
+		return errors.Errorf("no such run task with id %s for run %s", et.RunTaskID, r.ID)
 	}
 
-	rt.StartTime = et.Status.StartTime
-	rt.EndTime = et.Status.EndTime
+	rt.StartTime = et.StartTime
+	rt.EndTime = et.EndTime
 
 	wrongstatus := false
-	switch et.Status.Phase {
+	switch et.Phase {
 	case types.ExecutorTaskPhaseNotStarted:
 		if rt.Status != types.RunTaskStatusNotStarted {
 			wrongstatus = true
@@ -777,11 +793,11 @@ func (s *Runservice) updateRunTaskStatus(et *types.ExecutorTask, r *types.Run) e
 		}
 	}
 	if wrongstatus {
-		s.log.Warn().Msgf("ignoring wrong executor task %q status: %q, rt status: %q", et.ID, et.Status.Phase, rt.Status)
+		s.log.Warn().Msgf("ignoring wrong executor task %q status: %q, rt status: %q", et.ID, et.Phase, rt.Status)
 		return nil
 	}
 
-	switch et.Status.Phase {
+	switch et.Phase {
 	case types.ExecutorTaskPhaseNotStarted:
 		rt.Status = types.RunTaskStatusNotStarted
 	case types.ExecutorTaskPhaseCancelled:
@@ -796,12 +812,12 @@ func (s *Runservice) updateRunTaskStatus(et *types.ExecutorTask, r *types.Run) e
 		rt.Status = types.RunTaskStatusFailed
 	}
 
-	rt.Timedout = et.Status.Timedout
-	rt.SetupStep.Phase = et.Status.SetupStep.Phase
-	rt.SetupStep.StartTime = et.Status.SetupStep.StartTime
-	rt.SetupStep.EndTime = et.Status.SetupStep.EndTime
+	rt.Timedout = et.Timedout
+	rt.SetupStep.Phase = et.SetupStep.Phase
+	rt.SetupStep.StartTime = et.SetupStep.StartTime
+	rt.SetupStep.EndTime = et.SetupStep.EndTime
 
-	for i, s := range et.Status.Steps {
+	for i, s := range et.Steps {
 		rt.Steps[i].Phase = s.Phase
 		rt.Steps[i].ExitStatus = s.ExitStatus
 		rt.Steps[i].StartTime = s.StartTime
@@ -821,7 +837,7 @@ func (s *Runservice) executorTaskUpdateHandler(ctx context.Context, c <-chan str
 				if err := s.handleExecutorTaskUpdate(ctx, etID); err != nil {
 					// TODO(sgotti) improve logging to not return "run modified errors" since
 					// they are normal
-					s.log.Warn().Msgf("err: %+v", err)
+					s.log.Warn().Err(err).Send()
 				}
 			}()
 		}
@@ -885,14 +901,14 @@ func (s *Runservice) executorTaskCleaner(ctx context.Context, executorTaskID str
 			return nil
 		}
 
-		if et.Status.Phase.IsFinished() {
-			r, err := s.d.GetRun(tx, et.Spec.RunID)
+		if et.Phase.IsFinished() {
+			r, err := s.d.GetRun(tx, et.RunID)
 			if err != nil {
 				return errors.WithStack(err)
 			}
 			if r == nil {
 				// run doesn't exists, remove executor task
-				s.log.Warn().Msgf("deleting executor task %q since run %q doesn't exist", et.ID, et.Spec.RunID)
+				s.log.Warn().Msgf("deleting executor task %q since run %q doesn't exist", et.ID, et.RunID)
 				if err := s.d.DeleteExecutorTask(tx, et.ID); err != nil {
 					s.log.Err(err).Send()
 					return errors.WithStack(err)
@@ -902,8 +918,8 @@ func (s *Runservice) executorTaskCleaner(ctx context.Context, executorTaskID str
 
 			if r.Phase.IsFinished() {
 				// if the run is finished mark the executor tasks to stop
-				if !et.Spec.Stop {
-					et.Spec.Stop = true
+				if !et.Stop {
+					et.Stop = true
 					if err := s.d.UpdateExecutorTask(tx, et); err != nil {
 						return errors.WithStack(err)
 					}
@@ -912,18 +928,18 @@ func (s *Runservice) executorTaskCleaner(ctx context.Context, executorTaskID str
 			}
 		}
 
-		if !et.Status.Phase.IsFinished() {
+		if !et.Phase.IsFinished() {
 			// if the executor doesn't exists anymore mark the not finished executor tasks as failed
-			executor, err := s.d.GetExecutorByExecutorID(tx, et.Spec.ExecutorID)
+			executor, err := s.d.GetExecutorByExecutorID(tx, et.ExecutorID)
 			if err != nil {
 				return errors.WithStack(err)
 			}
 			if executor == nil {
-				s.log.Warn().Msgf("executor with id %q doesn't exist. marking executor task %q as failed", et.Spec.ExecutorID, et.ID)
-				et.Status.FailError = "executor deleted"
-				et.Status.Phase = types.ExecutorTaskPhaseFailed
-				et.Status.EndTime = util.TimeP(time.Now())
-				for _, s := range et.Status.Steps {
+				s.log.Warn().Msgf("executor with id %q doesn't exist. marking executor task %q as failed", et.ExecutorID, et.ID)
+				et.FailError = "executor deleted"
+				et.Phase = types.ExecutorTaskPhaseFailed
+				et.EndTime = util.TimeP(time.Now())
+				for _, s := range et.Steps {
 					if s.Phase == types.ExecutorTaskPhaseRunning {
 						s.Phase = types.ExecutorTaskPhaseFailed
 						s.EndTime = util.TimeP(time.Now())
@@ -1018,7 +1034,7 @@ func (s *Runservice) fetchLog(ctx context.Context, runID string, rt *types.RunTa
 		if et == nil {
 			return nil
 		}
-		executor, err = s.d.GetExecutorByExecutorID(tx, et.Spec.ExecutorID)
+		executor, err = s.d.GetExecutorByExecutorID(tx, et.ExecutorID)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -1037,7 +1053,7 @@ func (s *Runservice) fetchLog(ctx context.Context, runID string, rt *types.RunTa
 	}
 
 	if executor == nil {
-		s.log.Warn().Msgf("executor with id %q doesn't exist. Skipping fetching", et.Spec.ExecutorID)
+		s.log.Warn().Msgf("executor with id %q doesn't exist. Skipping fetching", et.ExecutorID)
 		return nil
 	}
 
@@ -1061,22 +1077,30 @@ func (s *Runservice) fetchLog(ctx context.Context, runID string, rt *types.RunTa
 	} else {
 		u = fmt.Sprintf(executor.ListenURL+"/api/v1alpha/executor/logs?taskid=%s&step=%d", et.ID, stepnum)
 	}
-	r, err := http.Get(u)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	defer r.Body.Close()
+	if s.c.ExecutorAPIToken != "" {
+		req.Header.Set("Authorization", "token "+s.c.ExecutorAPIToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+
+	defer resp.Body.Close()
 
 	// ignore if not found
-	if r.StatusCode == http.StatusNotFound {
+	if resp.StatusCode == http.StatusNotFound {
 		return nil
 	}
-	if r.StatusCode != http.StatusOK {
-		return errors.Errorf("received http status: %d", r.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("received http status: %d", resp.StatusCode)
 	}
 
 	size := int64(-1)
-	sizeStr := r.Header.Get("Content-Length")
+	sizeStr := resp.Header.Get("Content-Length")
 	if sizeStr != "" {
 		size, err = strconv.ParseInt(sizeStr, 10, 64)
 		if err != nil {
@@ -1084,7 +1108,7 @@ func (s *Runservice) fetchLog(ctx context.Context, runID string, rt *types.RunTa
 		}
 	}
 
-	return errors.WithStack(s.ost.WriteObject(logPath, r.Body, size, false))
+	return errors.WithStack(s.ost.WriteObject(logPath, resp.Body, size, false))
 }
 
 func (s *Runservice) finishSetupLogPhase(ctx context.Context, runID, runTaskID string) error {
@@ -1229,7 +1253,7 @@ func (s *Runservice) fetchArchive(ctx context.Context, runID string, rt *types.R
 		if et == nil {
 			return nil
 		}
-		executor, err = s.d.GetExecutorByExecutorID(tx, et.Spec.ExecutorID)
+		executor, err = s.d.GetExecutorByExecutorID(tx, et.ExecutorID)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -1248,7 +1272,7 @@ func (s *Runservice) fetchArchive(ctx context.Context, runID string, rt *types.R
 	}
 
 	if executor == nil {
-		s.log.Warn().Msgf("executor with id %q doesn't exist. Skipping fetching", et.Spec.ExecutorID)
+		s.log.Warn().Msgf("executor with id %q doesn't exist. Skipping fetching", et.ExecutorID)
 		return nil
 	}
 
@@ -1263,22 +1287,31 @@ func (s *Runservice) fetchArchive(ctx context.Context, runID string, rt *types.R
 
 	u := fmt.Sprintf(executor.ListenURL+"/api/v1alpha/executor/archives?taskid=%s&step=%d", et.ID, stepnum)
 	s.log.Debug().Msgf("fetchArchive: %s", u)
-	r, err := http.Get(u)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	defer r.Body.Close()
+	if s.c.ExecutorAPIToken != "" {
+		req.Header.Set("Authorization", "token "+s.c.ExecutorAPIToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+
+	defer resp.Body.Close()
 
 	// ignore if not found
-	if r.StatusCode == http.StatusNotFound {
+	if resp.StatusCode == http.StatusNotFound {
 		return nil
 	}
-	if r.StatusCode != http.StatusOK {
-		return errors.Errorf("received http status: %d", r.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return errors.Errorf("received http status: %d", resp.StatusCode)
 	}
 
 	size := int64(-1)
-	sizeStr := r.Header.Get("Content-Length")
+	sizeStr := resp.Header.Get("Content-Length")
 	if sizeStr != "" {
 		size, err = strconv.ParseInt(sizeStr, 10, 64)
 		if err != nil {
@@ -1286,7 +1319,7 @@ func (s *Runservice) fetchArchive(ctx context.Context, runID string, rt *types.R
 		}
 	}
 
-	return errors.WithStack(s.ost.WriteObject(path, r.Body, size, false))
+	return errors.WithStack(s.ost.WriteObject(path, resp.Body, size, false))
 }
 
 func (s *Runservice) fetchTaskArchives(ctx context.Context, runID string, rt *types.RunTask) {
@@ -1580,7 +1613,7 @@ func (s *Runservice) cacheCleaner(ctx context.Context, cacheExpireInterval time.
 		if object.LastModified.Add(cacheExpireInterval).Before(time.Now()) {
 			if err := s.ost.DeleteObject(object.Path); err != nil {
 				if !objectstorage.IsNotExist(err) {
-					s.log.Warn().Msgf("failed to delete cache object %q: %v", object.Path, err)
+					s.log.Warn().Err(err).Msgf("failed to delete cache object %q", object.Path)
 				}
 			}
 		}
@@ -1609,7 +1642,7 @@ func (s *Runservice) logCleanerLoop(ctx context.Context, logExpireInterval time.
 
 	for {
 		if err := s.objectsCleaner(ctx, store.OSTLogsBaseDir(), common.LogCleanerLockKey, logExpireInterval); err != nil {
-			s.log.Warn().Msgf("objectsCleaner error: %v", err)
+			s.log.Warn().Err(err).Msgf("objectsCleaner error")
 		}
 
 		sleepCh := time.NewTimer(logCleanerInterval).C
@@ -1639,7 +1672,7 @@ func (s *Runservice) objectsCleaner(ctx context.Context, prefix string, etcdLock
 		if object.LastModified.Add(objectExpireInterval).Before(time.Now()) {
 			if err := s.ost.DeleteObject(object.Path); err != nil {
 				if !objectstorage.IsNotExist(err) {
-					s.log.Warn().Msgf("failed to delete object %q: %v", object.Path, err)
+					s.log.Warn().Err(err).Msgf("failed to delete object %q", object.Path)
 				}
 			}
 		}

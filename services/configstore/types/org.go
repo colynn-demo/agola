@@ -15,19 +15,12 @@
 package types
 
 import (
-	stypes "agola.io/agola/services/types"
-
-	"github.com/gofrs/uuid"
-)
-
-const (
-	OrganizationKind    = "organization"
-	OrganizationVersion = "v0.1.0"
+	"agola.io/agola/internal/sqlg"
+	"agola.io/agola/internal/sqlg/sql"
 )
 
 type Organization struct {
-	stypes.TypeMeta
-	stypes.ObjectMeta
+	sqlg.ObjectMeta
 
 	Name string `json:"name,omitempty"`
 
@@ -38,26 +31,14 @@ type Organization struct {
 	CreatorUserID string `json:"creator_user_id,omitempty"`
 }
 
-func NewOrganization() *Organization {
+func NewOrganization(tx *sql.Tx) *Organization {
 	return &Organization{
-		TypeMeta: stypes.TypeMeta{
-			Kind:    OrganizationKind,
-			Version: OrganizationVersion,
-		},
-		ObjectMeta: stypes.ObjectMeta{
-			ID: uuid.Must(uuid.NewV4()).String(),
-		},
+		ObjectMeta: sqlg.NewObjectMeta(tx),
 	}
 }
 
-const (
-	OrganizationMemberKind    = "organizationmember"
-	OrganizationMemberVersion = "v0.1.0"
-)
-
 type OrganizationMember struct {
-	stypes.TypeMeta
-	stypes.ObjectMeta
+	sqlg.ObjectMeta
 
 	OrganizationID string `json:"organization_id,omitempty"`
 	UserID         string `json:"user_id,omitempty"`
@@ -65,14 +46,8 @@ type OrganizationMember struct {
 	MemberRole MemberRole `json:"member_role,omitempty"`
 }
 
-func NewOrganizationMember() *OrganizationMember {
+func NewOrganizationMember(tx *sql.Tx) *OrganizationMember {
 	return &OrganizationMember{
-		TypeMeta: stypes.TypeMeta{
-			Kind:    OrganizationMemberKind,
-			Version: OrganizationMemberVersion,
-		},
-		ObjectMeta: stypes.ObjectMeta{
-			ID: uuid.Must(uuid.NewV4()).String(),
-		},
+		ObjectMeta: sqlg.NewObjectMeta(tx),
 	}
 }

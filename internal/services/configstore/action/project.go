@@ -18,13 +18,12 @@ import (
 	"context"
 	"path"
 
-	"agola.io/agola/internal/errors"
-	"agola.io/agola/internal/sql"
+	"github.com/gofrs/uuid"
+	"github.com/sorintlab/errors"
 
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	"agola.io/agola/services/configstore/types"
-
-	"github.com/gofrs/uuid"
 )
 
 func (h *ActionHandler) ValidateProjectReq(ctx context.Context, req *CreateUpdateProjectRequest) error {
@@ -151,7 +150,7 @@ func (h *ActionHandler) CreateProject(ctx context.Context, req *CreateUpdateProj
 			}
 		}
 
-		project = types.NewProject()
+		project = types.NewProject(tx)
 		project.Name = req.Name
 		project.Parent = req.Parent
 		project.Visibility = req.Visibility

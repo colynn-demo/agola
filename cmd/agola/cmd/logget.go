@@ -20,12 +20,12 @@ import (
 	"net/http"
 	"os"
 
-	"agola.io/agola/internal/errors"
+	"github.com/rs/zerolog/log"
+	"github.com/sorintlab/errors"
+	"github.com/spf13/cobra"
+
 	gwapitypes "agola.io/agola/services/gateway/api/types"
 	gwclient "agola.io/agola/services/gateway/client"
-
-	"github.com/rs/zerolog/log"
-	"github.com/spf13/cobra"
 )
 
 var cmdLogGet = &cobra.Command{
@@ -144,7 +144,7 @@ func logGet(cmd *cobra.Command, args []string) error {
 		resp, err = gwclient.GetUserLogs(context.TODO(), logGetOpts.username, logGetOpts.runNumber, taskid, logGetOpts.setup, logGetOpts.step, logGetOpts.follow)
 	}
 	if err != nil {
-		return errors.Errorf("failed to get log: %v", err)
+		return errors.Wrapf(err, "failed to get log")
 	}
 	defer resp.Body.Close()
 
@@ -155,11 +155,11 @@ func logGet(cmd *cobra.Command, args []string) error {
 		}
 		defer f.Close()
 		if _, err := io.Copy(f, resp.Body); err != nil {
-			return errors.Errorf("failed to write log: %v", err)
+			return errors.Wrapf(err, "failed to write log")
 		}
 	} else {
 		if _, err := io.Copy(os.Stdout, resp.Body); err != nil {
-			return errors.Errorf("unexpected err: %v", err)
+			return errors.WithStack(err)
 		}
 	}
 

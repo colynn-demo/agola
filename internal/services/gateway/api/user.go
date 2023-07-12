@@ -21,16 +21,16 @@ import (
 	"sort"
 	"strconv"
 
-	"agola.io/agola/internal/errors"
+	"github.com/gorilla/mux"
+	"github.com/rs/zerolog"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/services/gateway/action"
 	"agola.io/agola/internal/services/gateway/common"
 	"agola.io/agola/internal/util"
 	csapitypes "agola.io/agola/services/configstore/api/types"
 	cstypes "agola.io/agola/services/configstore/types"
 	gwapitypes "agola.io/agola/services/gateway/api/types"
-
-	"github.com/gorilla/mux"
-	"github.com/rs/zerolog"
 )
 
 type CreateUserHandler struct {
@@ -111,13 +111,13 @@ func (h *CurrentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, tokens, linkedAccounts, err := h.ah.GetCurrentUser(ctx, userID)
+	user, err := h.ah.GetCurrentUser(ctx, userID)
 	if util.HTTPError(w, err) {
 		h.log.Err(err).Send()
 		return
 	}
 
-	res := createPrivateUserResponse(user, tokens, linkedAccounts)
+	res := createPrivateUserResponse(user.User, user.Tokens, user.LinkedAccounts)
 	if err := util.HTTPResponse(w, http.StatusOK, res); err != nil {
 		h.log.Err(err).Send()
 	}
@@ -219,21 +219,40 @@ func (h *UsersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := query.Get("start")
+	queryType := query.Get("query_type")
 
-	areq := &action.GetUsersRequest{
-		Start: start,
-		Limit: limit,
-		Asc:   asc,
-	}
-	csusers, err := h.ah.GetUsers(ctx, areq)
-	if util.HTTPError(w, err) {
-		h.log.Err(err).Send()
+	var ausers []*action.PrivateUserResponse
+	var err error
+	switch queryType {
+	case "byremoteuser":
+		remoteUserID := query.Get("remoteuserid")
+		rsRef := query.Get("remotesourceref")
+
+		user, err := h.ah.GetUserByLinkedAccountRemoteUserAndSource(ctx, remoteUserID, rsRef)
+		if util.HTTPError(w, err) {
+			h.log.Err(err).Send()
+			return
+		}
+		ausers = []*action.PrivateUserResponse{user}
+	case "":
+		areq := &action.GetUsersRequest{
+			Start: start,
+			Limit: limit,
+			Asc:   asc,
+		}
+		ausers, err = h.ah.GetUsers(ctx, areq)
+		if util.HTTPError(w, err) {
+			h.log.Err(err).Send()
+			return
+		}
+	default:
+		util.HTTPError(w, util.NewAPIError(util.ErrBadRequest, errors.Errorf("unknown query_type: %q", queryType)))
 		return
 	}
 
-	users := make([]*gwapitypes.UserResponse, len(csusers))
-	for i, p := range csusers {
-		users[i] = createUserResponse(p)
+	users := make([]*gwapitypes.PrivateUserResponse, len(ausers))
+	for i, p := range ausers {
+		users[i] = createPrivateUserResponse(p.User, p.Tokens, p.LinkedAccounts)
 	}
 
 	if err := util.HTTPResponse(w, http.StatusOK, users); err != nil {
@@ -431,6 +450,8 @@ func (h *RegisterUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 func (h *RegisterUserHandler) registerUser(ctx context.Context, req *gwapitypes.RegisterUserRequest) (*gwapitypes.RegisterUserResponse, error) {
 	creq := &action.RegisterUserRequest{
 		UserName:         req.CreateUserRequest.UserName,
+		RemoteUserName:   req.CreateUserLARequest.RemoteSourceLoginName,
+		RemotePassword:   req.CreateUserLARequest.RemoteSourceLoginPassword,
 		RemoteSourceName: req.CreateUserLARequest.RemoteSourceName,
 	}
 
@@ -525,7 +546,7 @@ func (h *LoginUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.loginUser(ctx, req)
+	res, err := h.loginUser(ctx, w, req)
 	if util.HTTPError(w, err) {
 		h.log.Err(err).Send()
 		return
@@ -536,7 +557,7 @@ func (h *LoginUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *LoginUserHandler) loginUser(ctx context.Context, req *gwapitypes.LoginUserRequest) (*gwapitypes.LoginUserResponse, error) {
+func (h *LoginUserHandler) loginUser(ctx context.Context, w http.ResponseWriter, req *gwapitypes.LoginUserRequest) (*gwapitypes.LoginUserResponse, error) {
 	creq := &action.LoginUserRequest{
 		RemoteSourceName: req.RemoteSourceName,
 	}
@@ -554,9 +575,12 @@ func (h *LoginUserHandler) loginUser(ctx context.Context, req *gwapitypes.LoginU
 	authresp := cresp.Response.(*action.LoginUserResponse)
 
 	resp := &gwapitypes.LoginUserResponse{
-		Token: authresp.Token,
-		User:  createUserResponse(authresp.User),
+		User: createUserResponse(authresp.User),
 	}
+
+	http.SetCookie(w, authresp.Cookie)
+	http.SetCookie(w, authresp.SecondaryCookie)
+
 	return resp, nil
 }
 

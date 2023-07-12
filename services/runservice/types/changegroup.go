@@ -1,14 +1,8 @@
 package types
 
 import (
-	stypes "agola.io/agola/services/types"
-
-	"github.com/gofrs/uuid"
-)
-
-const (
-	ChangeGroupKind    = "changegroup"
-	ChangeGroupVersion = "v0.1.0"
+	"agola.io/agola/internal/sqlg"
+	"agola.io/agola/internal/sqlg/sql"
 )
 
 type ChangeGroupType string
@@ -19,21 +13,14 @@ const (
 )
 
 type ChangeGroup struct {
-	stypes.TypeMeta
-	stypes.ObjectMeta
+	sqlg.ObjectMeta
 
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
-func NewChangeGroup() *ChangeGroup {
+func NewChangeGroup(tx *sql.Tx) *ChangeGroup {
 	return &ChangeGroup{
-		TypeMeta: stypes.TypeMeta{
-			Kind:    ChangeGroupKind,
-			Version: ChangeGroupVersion,
-		},
-		ObjectMeta: stypes.ObjectMeta{
-			ID: uuid.Must(uuid.NewV4()).String(),
-		},
+		ObjectMeta: sqlg.NewObjectMeta(tx),
 	}
 }

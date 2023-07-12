@@ -17,9 +17,10 @@ package action
 import (
 	"context"
 
-	"agola.io/agola/internal/errors"
+	"github.com/sorintlab/errors"
+
 	"agola.io/agola/internal/services/configstore/db"
-	"agola.io/agola/internal/sql"
+	"agola.io/agola/internal/sqlg/sql"
 	"agola.io/agola/internal/util"
 	csapitypes "agola.io/agola/services/configstore/api/types"
 	"agola.io/agola/services/configstore/types"
@@ -103,7 +104,7 @@ func (h *ActionHandler) CreateOrg(ctx context.Context, req *CreateOrgRequest) (*
 			}
 		}
 
-		org = types.NewOrganization()
+		org = types.NewOrganization(tx)
 		org.Name = req.Name
 		org.Visibility = req.Visibility
 		org.CreatorUserID = req.CreatorUserID
@@ -114,7 +115,7 @@ func (h *ActionHandler) CreateOrg(ctx context.Context, req *CreateOrgRequest) (*
 
 		if org.CreatorUserID != "" {
 			// add the creator as org member with role owner
-			orgmember := types.NewOrganizationMember()
+			orgmember := types.NewOrganizationMember(tx)
 			orgmember.OrganizationID = org.ID
 			orgmember.UserID = org.CreatorUserID
 			orgmember.MemberRole = types.MemberRoleOwner
@@ -125,7 +126,7 @@ func (h *ActionHandler) CreateOrg(ctx context.Context, req *CreateOrgRequest) (*
 		}
 
 		// create root org project group
-		pg := types.NewProjectGroup()
+		pg := types.NewProjectGroup(tx)
 		// use same org visibility
 		pg.Visibility = org.Visibility
 		pg.Parent = types.Parent{
@@ -196,15 +197,12 @@ func (h *ActionHandler) DeleteOrg(ctx context.Context, orgRef string) error {
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("org %q doesn't exist", orgRef))
 		}
 
-		orgInvitations, err := h.d.GetOrgInvitations(tx, org.ID)
-		if err != nil {
+		if err := h.d.DeleteOrgMembersByOrgID(tx, org.ID); err != nil {
 			return util.NewAPIError(util.KindFromRemoteError(err), err)
 		}
-		for _, invitation := range orgInvitations {
-			err = h.d.DeleteOrgInvitation(tx, invitation.ID)
-			if err != nil {
-				return util.NewAPIError(util.KindFromRemoteError(err), err)
-			}
+
+		if err := h.d.DeleteOrgInvitationsByOrgID(tx, org.ID); err != nil {
+			return util.NewAPIError(util.KindFromRemoteError(err), err)
 		}
 
 		// delete all projects and groups
@@ -283,7 +281,7 @@ func (h *ActionHandler) AddOrgMember(ctx context.Context, orgRef, userRef string
 			}
 			orgmember.MemberRole = role
 		} else {
-			orgmember = types.NewOrganizationMember()
+			orgmember = types.NewOrganizationMember(tx)
 			orgmember.OrganizationID = org.ID
 			orgmember.UserID = user.ID
 			orgmember.MemberRole = role
@@ -461,7 +459,7 @@ func (h *ActionHandler) CreateOrgInvitation(ctx context.Context, req *CreateOrgI
 			return util.NewAPIError(util.ErrBadRequest, errors.Errorf("invitation already exists"))
 		}
 
-		orgInvitation = types.NewOrgInvitation()
+		orgInvitation = types.NewOrgInvitation(tx)
 		orgInvitation.UserID = user.ID
 		orgInvitation.OrganizationID = org.ID
 		orgInvitation.Role = req.Role
@@ -557,7 +555,7 @@ func (h *ActionHandler) OrgInvitationAction(ctx context.Context, req *OrgInvitat
 		}
 
 		if req.Action == csapitypes.Accept {
-			orgMember := types.NewOrganizationMember()
+			orgMember := types.NewOrganizationMember(tx)
 			orgMember.OrganizationID = orgInvitation.OrganizationID
 			orgMember.UserID = orgInvitation.UserID
 			orgMember.MemberRole = orgInvitation.Role

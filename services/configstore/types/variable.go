@@ -15,9 +15,9 @@
 package types
 
 import (
+	"agola.io/agola/internal/sqlg"
+	"agola.io/agola/internal/sqlg/sql"
 	stypes "agola.io/agola/services/types"
-
-	"github.com/gofrs/uuid"
 )
 
 type VariableValue struct {
@@ -27,14 +27,8 @@ type VariableValue struct {
 	When *stypes.When `json:"when,omitempty"`
 }
 
-const (
-	VariableKind    = "variable"
-	VariableVersion = "v0.1.0"
-)
-
 type Variable struct {
-	stypes.TypeMeta
-	stypes.ObjectMeta
+	sqlg.ObjectMeta
 
 	Name string `json:"name,omitempty"`
 
@@ -43,14 +37,8 @@ type Variable struct {
 	Values []VariableValue `json:"values,omitempty"`
 }
 
-func NewVariable() *Variable {
+func NewVariable(tx *sql.Tx) *Variable {
 	return &Variable{
-		TypeMeta: stypes.TypeMeta{
-			Kind:    VariableKind,
-			Version: VariableVersion,
-		},
-		ObjectMeta: stypes.ObjectMeta{
-			ID: uuid.Must(uuid.NewV4()).String(),
-		},
+		ObjectMeta: sqlg.NewObjectMeta(tx),
 	}
 }

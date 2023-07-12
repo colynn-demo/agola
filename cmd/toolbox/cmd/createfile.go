@@ -17,11 +17,10 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 
-	"agola.io/agola/internal/errors"
+	"github.com/sorintlab/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +51,7 @@ func createFile(r io.Reader) (string, error) {
 		return "", errors.Errorf("failed to create tmp dir %q", tmpDir)
 	}
 
-	file, err := ioutil.TempFile("", "")
+	file, err := os.CreateTemp("", "")
 	if err != nil {
 		return "", errors.WithStack(err)
 	}
